@@ -10,7 +10,7 @@
 struct ThreadPool {
     using Task = std::function<void(void)>;
     rustex::mutex<std::vector<Task>> tasks;
-    std::counting_semaphore<256> sem { 0 };
+    std::counting_semaphore<65536> sem { 0 };
     std::vector<std::future<void>> threads;
 
     ThreadPool(unsigned size) {
