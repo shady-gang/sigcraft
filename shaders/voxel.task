@@ -1,9 +1,58 @@
 #version 450
 #extension GL_EXT_mesh_shader : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
-void main()
-{
-    EmitMeshTasksEXT(1, 16, 16);
+layout(scalar, buffer_reference) buffer VoxelDataRef {
+    uint data[];
+};
+
+struct ChunkSections {
+    VoxelDataRef sections[24];
+};
+
+layout(scalar, buffer_reference) buffer VisibleChunksArrayRef {
+    ChunkSections visible[];
+};
+
+layout(scalar, push_constant) uniform T {
+    mat4 matrix;
+    float time;
+    ivec3 camera_chunk_pos;
+    int visible_chunk_radius;
+    VisibleChunksArrayRef visible_chunks;
+} push_constants;
+
+
+struct Payload {
+    ivec3 chunk_position;
+    uint64_t chunk_data;
+};
+
+taskPayloadSharedEXT Payload ts_out;
+
+void main() {
+    // gl_WorkGroupID
+    int visible_chunks_array_size = push_constants.visible_chunk_radius * 2 + 1;
+    uint visible_chunks_array_idx = gl_WorkGroupID.x * visible_chunks_array_size + gl_WorkGroupID.z;
+
+    ivec3 visual_chunk_offset = ivec3(int(gl_WorkGroupID.x) - push_constants.visible_chunk_radius, gl_WorkGroupID.y, int(gl_WorkGroupID.z) - push_constants.visible_chunk_radius);
+    ivec3 chunk_position = push_constants.camera_chunk_pos;
+    chunk_position.y = 0;
+    chunk_position += visual_chunk_offset;
+
+    uint section = gl_WorkGroupID.y;
+
+    VoxelDataRef ptr = push_constants.visible_chunks.visible[visible_chunks_array_idx].sections[section];
+    if (uint64_t(ptr) != 0) {
+        ts_out.chunk_position = chunk_position;
+        ts_out.chunk_data = uint64_t(ptr);
+
+        EmitMeshTasksEXT(1, 16, 16);
+    } else {
+        EmitMeshTasksEXT(0, 0, 0);
+    }
 }

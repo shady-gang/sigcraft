@@ -2,6 +2,7 @@
 #extension GL_EXT_mesh_shader : require
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
 layout(local_size_x = 16, local_size_y = 1, local_size_z = 1) in;
 layout(triangles, max_vertices = 48, max_primitives = 16) out;
@@ -10,12 +11,28 @@ layout(scalar, buffer_reference) buffer VoxelDataRef {
   uint data[];
 };
 
+struct ChunkSections {
+    VoxelDataRef sections[24];
+};
+
+layout(scalar, buffer_reference) buffer VisibleChunksArrayRef {
+    ChunkSections visible[];
+};
+
 layout(scalar, push_constant) uniform T {
     mat4 matrix;
-    ivec3 chunk_position;
     float time;
-    VoxelDataRef chunk_data;
+    ivec3 camera_chunk_pos;
+    int visible_chunk_radius;
+    VisibleChunksArrayRef visible_chunks;
 } push_constants;
+
+struct Payload {
+    ivec3 chunk_position;
+    uint64_t chunk_data;
+};
+
+taskPayloadSharedEXT Payload ts_in;
 
 layout(location = 0)
 out vec4 colorOut[];
@@ -32,7 +49,8 @@ uint encode_chunkcoord(uint x, uint y, uint z, uint lod) {
 
 uint safe_access(uint x, uint y, uint z) {
   if (x < CUNK_CHUNK_SIZE && y < CUNK_CHUNK_SIZE && z < CUNK_CHUNK_SIZE) {
-    return push_constants.chunk_data.data[encode_chunkcoord(x, y, z, 0)];
+    VoxelDataRef voxel_data = VoxelDataRef(ts_in.chunk_data);
+    return voxel_data.data[encode_chunkcoord(x, y, z, 0)];
   }
   return 0;
 }
@@ -54,9 +72,9 @@ void main()
   uvec3 block_pos = uvec3(gl_LocalInvocationID.x, gl_WorkGroupID.yz);
 
   if (need_face(block_pos, ivec3(0, 1, 0))) {
-      gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 0].gl_Position = push_constants.matrix * vec4(vec3(push_constants.chunk_position) * 16.0 + block_pos + vec3(1.0, 0.0, 0), 1.0);
-      gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 1].gl_Position = push_constants.matrix * vec4(vec3(push_constants.chunk_position) * 16.0 + block_pos + vec3(1.0, 0.0, 1), 1.0);
-      gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 2].gl_Position = push_constants.matrix * vec4(vec3(push_constants.chunk_position) * 16.0 + block_pos + vec3(0.0, 0.0, 1), 1.0);
+      gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 0].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + block_pos + vec3(1.0, 0.0, 0), 1.0);
+      gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 1].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + block_pos + vec3(1.0, 0.0, 1), 1.0);
+      gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 2].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + block_pos + vec3(0.0, 0.0, 1), 1.0);
   } else {
       gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 0].gl_Position = vec4(0);
       gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 1].gl_Position = vec4(0);
