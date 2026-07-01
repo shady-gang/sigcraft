@@ -19,7 +19,7 @@ struct ChunkMesh {
     std::unique_ptr<imr::Buffer> buf;
     size_t num_verts;
 
-    ChunkMesh(imr::Device&, std::mutex& device_mutex, ChunkNeighbors& n);
+    ChunkMesh(imr::Device&, ChunkNeighbors& n);
 
     struct Vertex {
         int16_t vx, vy, vz;

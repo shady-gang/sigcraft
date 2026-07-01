@@ -151,7 +151,6 @@ int main(int argc, char** argv) {
 
     imr::Context context;
     imr::Device device(context);
-    std::mutex device_mutex;
     imr::Swapchain swapchain(device, window);
     imr::FpsCounter fps_counter;
 
@@ -171,7 +170,6 @@ int main(int argc, char** argv) {
         fps_counter.tick();
         fps_counter.updateGlfwWindowTitle(window);
 
-        std::scoped_lock<std::mutex> device_lock(device_mutex);
         swapchain.renderFrameSimplified([&](imr::Swapchain::SimplifiedRenderContext& context) {
             camera_update(window, &camera_input);
             camera_move_freelook(&camera, &camera_input, &camera_state, delta);
@@ -301,9 +299,9 @@ int main(int argc, char** argv) {
                         }
                         if (all_neighbours_loaded) {
                             mesh_container.task_spawned = true;
-                            tp.schedule([n,&device,&device_mutex,chunk = chunk]() {
+                            tp.schedule([n,&device,chunk = chunk]() {
                                 auto nn = n;
-                                auto mesh = std::make_shared<ChunkMesh>(device, device_mutex, nn);
+                                auto mesh = std::make_shared<ChunkMesh>(device, nn);
                                 auto mesh_lock = chunk->mesh.lock_mut();
                                 mesh_lock->mesh = mesh;
                                 mesh_lock->task_spawned = false;

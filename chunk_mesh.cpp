@@ -225,7 +225,7 @@ void chunk_mesh(const ChunkData* chunk, ChunkNeighborsUnsafe& neighbours, std::v
     }
 }
 
-ChunkMesh::ChunkMesh(imr::Device& d, std::mutex& mutex, ChunkNeighbors& n) {
+ChunkMesh::ChunkMesh(imr::Device& d, ChunkNeighbors& n) {
     std::vector<uint8_t> g;
     ChunkNeighborsUnsafe unsafe {};
     for (size_t x = 0; x < 3; x++) {
@@ -242,9 +242,7 @@ ChunkMesh::ChunkMesh(imr::Device& d, std::mutex& mutex, ChunkNeighbors& n) {
     void* buffer = g.data();
 
     if (buffer_size > 0) {
-        mutex.lock();
         buf = std::make_unique<imr::Buffer>(d, buffer_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         buf->uploadDataSync(0, buffer_size, buffer);
-        mutex.unlock();
     }
 }
