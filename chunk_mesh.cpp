@@ -247,26 +247,47 @@ ChunkMesh::ChunkMesh(imr::Device& d, ChunkNeighbors& n) {
     }
 }
 
-unsigned encode_chunkcoord(unsigned x, unsigned y, unsigned z) {
-    return x + (y + z * CUNK_CHUNK_MAX_HEIGHT) * CUNK_CHUNK_SIZE;
-}
-
-std::tuple<unsigned, unsigned, unsigned> decode_chunkcoord(unsigned coord) {
-    unsigned x = coord % CUNK_CHUNK_SIZE;
-    coord /= CUNK_CHUNK_SIZE;
-    unsigned y = coord % CUNK_CHUNK_MAX_HEIGHT;
-    coord /= CUNK_CHUNK_MAX_HEIGHT;
-    unsigned z = coord;
-    return {x, y, z};
-}
-
 ChunkVoxelData::ChunkVoxelData(imr::Device& d, std::shared_ptr<Chunk> c) {
     unsigned buffer[CUNK_CHUNK_SIZE * CUNK_CHUNK_SIZE * CUNK_CHUNK_MAX_HEIGHT];
-    for (int x = 0; x < CUNK_CHUNK_SIZE; x++)
-        for (int y = 0; y < CUNK_CHUNK_MAX_HEIGHT; y++)
-            for (int z = 0; z < CUNK_CHUNK_SIZE; z++) {
-                buffer[encode_chunkcoord(x, y, z)] = chunk_get_block_data(&c->data, x, y, z);
-            }
-    buf = std::make_unique<imr::Buffer>(d, buffer_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    buf->uploadDataSync(0, buffer_size, buffer);
+    for (int section = 0; section < CUNK_CHUNK_SECTIONS_COUNT; section++) {
+        int baseY = section * CUNK_CHUNK_SIZE;
+        bool empty = true;
+        for (int x = 0; x < CUNK_CHUNK_SIZE; x++)
+            for (int y = 0; y < CUNK_CHUNK_SIZE; y++)
+                for (int z = 0; z < CUNK_CHUNK_SIZE; z++) {
+                    auto data = buffer[encode_chunkcoord(x, y, z, 0)] = chunk_get_block_data(&c->data, x, baseY + y, z);
+                    if (data != 0)
+                        empty = false;
+                }
+
+        if (empty)
+            continue;
+
+        // LOD computation
+        for (int lod = 1; lod < 5; lod++) {
+            for (int x = 0; x < lod_res[lod]; x++)
+                for (int y = 0; y < lod_res[lod]; y++)
+                    for (int z = 0; z < lod_res[lod]; z++) {
+                        bool completely_filled = true, empty = true;
+                        for (int rx = x * 2; rx < x * 2 + 1; rx++)
+                            for (int ry = y * 2; ry < y * 2 + 1; ry++)
+                                for (int rz = z * 2; rz < z * 2 + 1; rz++) {
+                                    if (chunk_get_block_data(&c->data, x, baseY + y, z) != 0)
+                                        empty = false;
+                                    else
+                                        completely_filled = false;
+                                }
+
+                        if (completely_filled)
+                            buffer[encode_chunkcoord(x, y, z, lod)] = 2;
+                        else if (empty)
+                            buffer[encode_chunkcoord(x, y, z, lod)] = 0;
+                        else
+                            buffer[encode_chunkcoord(x, y, z, lod)] = 1;
+                    }
+        }
+
+        buf[section] = std::make_unique<imr::Buffer>(d, buffer_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        buf[section]->uploadDataSync(0, buffer_size, buffer);
+    }
 }

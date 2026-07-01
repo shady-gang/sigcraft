@@ -23,13 +23,16 @@ out vec4 colorOut[];
 #define CUNK_CHUNK_MAX_HEIGHT 384
 #define CUNK_CHUNK_SIZE 16
 
-uint encode_chunkcoord(uint x, uint y, uint z) {
-    return x + (y + z * CUNK_CHUNK_MAX_HEIGHT) * CUNK_CHUNK_SIZE;
+const uint lod_res[] = { 16, 8, 4, 2, 1 };
+const uint lod_offsets[] = { 0, 4096, 4608, 4672, 4680, 4681 };
+
+uint encode_chunkcoord(uint x, uint y, uint z, uint lod) {
+    return lod_offsets[lod] + x + (y + z * lod_res[lod]) * lod_res[lod];
 }
 
 uint safe_access(uint x, uint y, uint z) {
-  if (x < CUNK_CHUNK_SIZE && y < CUNK_CHUNK_MAX_HEIGHT && z < CUNK_CHUNK_SIZE) {
-    return push_constants.chunk_data.data[encode_chunkcoord(x, y, z)];
+  if (x < CUNK_CHUNK_SIZE && y < CUNK_CHUNK_SIZE && z < CUNK_CHUNK_SIZE) {
+    return push_constants.chunk_data.data[encode_chunkcoord(x, y, z, 0)];
   }
   return 0;
 }

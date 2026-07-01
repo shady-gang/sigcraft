@@ -33,12 +33,28 @@ struct ChunkMesh {
     static_assert(sizeof(Vertex) == sizeof(uint8_t) * 16);
 };
 
+constexpr static unsigned lod_res[] = { 16, 8, 4, 2, 1 };
+constexpr static unsigned lod_offsets[] = { 0, 4096, 4608, 4672, 4680, 4681 };
+
+inline unsigned encode_chunkcoord(unsigned x, unsigned y, unsigned z, int lod) {
+    return lod_offsets[lod] + x + (y + z * lod_res[lod]) * lod_res[lod];
+}
+
+inline std::tuple<unsigned, unsigned, unsigned> decode_chunkcoord(unsigned coord, int lod) {
+    unsigned x = coord % lod_res[lod];
+    coord /= lod_res[lod];
+    unsigned y = coord % lod_res[lod];
+    coord /= lod_res[lod];
+    unsigned z = coord;
+    return {x, y, z};
+}
+
 struct ChunkVoxelData {
-    std::unique_ptr<imr::Buffer> buf;
+    std::unique_ptr<imr::Buffer> buf[CUNK_CHUNK_SECTIONS_COUNT];
 
     ChunkVoxelData(imr::Device&, std::shared_ptr<Chunk>);
 
-    constexpr static size_t buffer_size = CUNK_CHUNK_SIZE * CUNK_CHUNK_SIZE * CUNK_CHUNK_MAX_HEIGHT * sizeof(int);
+    constexpr static size_t buffer_size = lod_offsets[5] * sizeof(int);
 };
 
 #endif

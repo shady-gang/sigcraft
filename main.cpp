@@ -334,15 +334,20 @@ int main(int argc, char** argv) {
                     }
                     auto data = data_container.data;
 
-                    push_constants.chunk_position = { chunk->cx, 0, chunk->cz };
-                    push_constants.bda = data->buf->device_address();
-                    vkCmdPushConstants(cmdbuf, pipeline->layout(), VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(push_constants), &push_constants);
+                    for (int section = 0; section < CUNK_CHUNK_SECTIONS_COUNT; section++) {
+                        if (!data->buf[section])
+                            continue;
 
-                    //vkCmdBindVertexBuffers(cmdbuf, 0, 1, &mesh->buf->handle, tmpPtr((VkDeviceSize) 0));
+                        push_constants.chunk_position = { chunk->cx, section, chunk->cz };
+                        push_constants.bda = data->buf[section]->device_address();
+                        vkCmdPushConstants(cmdbuf, pipeline->layout(), VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(push_constants), &push_constants);
 
-                    //assert(mesh->num_verts > 0);
-                    device.dispatch.cmdDrawMeshTasksEXT(cmdbuf, 1, 128, 16);
-                    //vkCmdDraw(cmdbuf, mesh->num_verts, 1, 0, 0);
+                        //vkCmdBindVertexBuffers(cmdbuf, 0, 1, &mesh->buf->handle, tmpPtr((VkDeviceSize) 0));
+
+                        //assert(mesh->num_verts > 0);
+                        device.dispatch.cmdDrawMeshTasksEXT(cmdbuf, 1, 16, 16);
+                        //vkCmdDraw(cmdbuf, mesh->num_verts, 1, 0, 0);
+                    }
 
                     context.frame().addCleanupAction([=, data = data]() {
 
