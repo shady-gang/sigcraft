@@ -29,7 +29,7 @@ layout(scalar, push_constant) uniform T {
 
 struct Payload {
     ivec3 chunk_position;
-    uint64_t chunk_data;
+    uint64_t neighboring_chunks[27];
 };
 
 taskPayloadSharedEXT Payload ts_in;
@@ -47,43 +47,88 @@ uint encode_chunkcoord(uint x, uint y, uint z, uint lod) {
     return lod_offsets[lod] + x + (y + z * lod_res[lod]) * lod_res[lod];
 }
 
-uint safe_access(uint x, uint y, uint z) {
-  if (x < CUNK_CHUNK_SIZE && y < CUNK_CHUNK_SIZE && z < CUNK_CHUNK_SIZE) {
-    VoxelDataRef voxel_data = VoxelDataRef(ts_in.chunk_data);
-    return voxel_data.data[encode_chunkcoord(x, y, z, 0)];
-  }
-  return 0;
+int world2chunk(int x) {
+    if (x >= 0) return x / 16;
+    return (x - 15) / 16;
 }
 
-uint safe_access(uvec3 v) {
-  return safe_access(v.x, v.y, v.z);
+ivec3 world2chunk(ivec3 v) {
+    return ivec3(world2chunk(v.x), world2chunk(v.y), world2chunk(v.z));
 }
 
-bool need_face(uvec3 pos, ivec3 delta) {
-  return (safe_access(pos) != 0) && (safe_access(uvec3(ivec3(pos) + delta)) == 0);
+int encode_neighboring_chunk_idx(int dx, int dy, int dz) {
+    return ((dx + 1) * 3 + (dy + 1)) * 3 + (dz + 1);
 }
 
-void main()
-{
-  uint vertexCount = 48;
-  uint triangleCount = 16;
-  SetMeshOutputsEXT(vertexCount, triangleCount);
+uint safe_access(int x, int y, int z) {
+    if (y < 0 || y >= CUNK_CHUNK_MAX_HEIGHT)
+        return 0;
+    int ox = 0, oy = 0, oz = 0;
+    if (x >= 16) {
+        ox = 1;
+        x -= 16;
+    }
+    if (y >= 16) {
+        oy = 1;
+        y -= 16;
+    }
+    if (z >= 16) {
+        oz = 1;
+        z -= 16;
+    }
+    if (x < 0) {
+        ox = -1;
+        x += 16;
+    }
+    if (y < 0) {
+        oy = -1;
+        y += 16;
+    }
+    if (z < 0) {
+        oz = -1;
+        z += 16;
+    }
 
-  uvec3 block_pos = uvec3(gl_LocalInvocationID.x, gl_WorkGroupID.yz);
+    if (x >= 0 && x < CUNK_CHUNK_SIZE && y >= 0 && z >= 0 && y < CUNK_CHUNK_SIZE && z < CUNK_CHUNK_SIZE) {
+        VoxelDataRef voxel_data = VoxelDataRef(ts_in.neighboring_chunks[encode_neighboring_chunk_idx(ox, oy, oz)]);
+        return voxel_data.data[encode_chunkcoord(x, y, z, 0)];
+    }
+    //ivec3 chunk_pos = world2chunk(ivec3(x, y, z));
+    //ivec3 delta = chunk_pos - push_constants.camera_chunk_pos;
+    //if (abs(delta.x) >= push_constants.visible_chunk_radius || abs(delta.z) >= push_constants.visible_chunk_radius)
+    //    return 0;
 
-  if (need_face(block_pos, ivec3(0, 1, 0))) {
-      gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 0].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + block_pos + vec3(1.0, 0.0, 0), 1.0);
-      gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 1].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + block_pos + vec3(1.0, 0.0, 1), 1.0);
-      gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 2].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + block_pos + vec3(0.0, 0.0, 1), 1.0);
-  } else {
-      gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 0].gl_Position = vec4(0);
-      gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 1].gl_Position = vec4(0);
-      gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 2].gl_Position = vec4(0);
-  }
+    return 0;
+}
 
-  gl_PrimitiveTriangleIndicesEXT[gl_LocalInvocationID.x + 0] = uvec3(gl_LocalInvocationID.x * 3 + 0, gl_LocalInvocationID.x * 3 + 1, gl_LocalInvocationID.x * 3 + 2);
+uint safe_access(ivec3 v) {
+    return safe_access(v.x, v.y, v.z);
+}
 
-  colorOut[gl_LocalInvocationID.x * 3 + 0] = vec4(1.0, 0.0, 0.0, 1.0);
-  colorOut[gl_LocalInvocationID.x * 3 + 1] = vec4(1.0, 0.0, 0.0, 1.0);
-  colorOut[gl_LocalInvocationID.x * 3 + 2] = vec4(1.0, 0.0, 0.0, 1.0);
+bool need_face(ivec3 pos, ivec3 delta) {
+    return (safe_access(pos) != 0) && (safe_access(pos + delta) == 0);
+}
+
+void main() {
+    uint vertexCount = 48;
+    uint triangleCount = 16;
+    SetMeshOutputsEXT(vertexCount, triangleCount);
+
+    ivec3 block_pos = ivec3(gl_LocalInvocationID.x, gl_WorkGroupID.yz);
+
+    if (need_face(block_pos, ivec3(0, 1, 0))) {
+        gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 0].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + block_pos + vec3(1.0, 0.0, 0), 1.0);
+        gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 1].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + block_pos + vec3(1.0, 0.0, 1), 1.0);
+        gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 2].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + block_pos + vec3(0.0, 0.0, 1), 1.0);
+    } else {
+        gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 0].gl_Position = vec4(0);
+        gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 1].gl_Position = vec4(0);
+        gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 2].gl_Position = vec4(0);
+    }
+
+    gl_PrimitiveTriangleIndicesEXT[gl_LocalInvocationID.x + 0] = uvec3(gl_LocalInvocationID.x * 3 + 0, gl_LocalInvocationID.x * 3 + 1, gl_LocalInvocationID.x * 3 + 2);
+
+    colorOut[gl_LocalInvocationID.x * 3 + 0] = vec4(1.0, 0.0, 0.0, 1.0);
+    colorOut[gl_LocalInvocationID.x * 3 + 1] = vec4(1.0, 0.0, 0.0, 1.0);
+    colorOut[gl_LocalInvocationID.x * 3 + 2] = vec4(1.0, 0.0, 0.0, 1.0);
 }
