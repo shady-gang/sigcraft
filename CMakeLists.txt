@@ -26,3 +26,5 @@ add_dependencies(sigcraft basic_frag_spv)
 
 add_custom_target(voxel_mesh_spv COMMAND ${GLSLANG_EXE} -V -S mesh ${CMAKE_CURRENT_SOURCE_DIR}/shaders/voxel.mesh -o ${CMAKE_CURRENT_BINARY_DIR}/voxel.mesh.spv --target-env spirv1.6)
 add_dependencies(sigcraft voxel_mesh_spv)
+add_custom_target(voxel_task_spv COMMAND ${GLSLANG_EXE} -V -S task ${CMAKE_CURRENT_SOURCE_DIR}/shaders/voxel.task -o ${CMAKE_CURRENT_BINARY_DIR}/voxel.task.spv --target-env spirv1.6)
+add_dependencies(sigcraft voxel_task_spv)

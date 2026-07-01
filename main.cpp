@@ -37,7 +37,7 @@ bool reload_shaders = false;
 
 struct Shaders {
     //std::vector<std::string> files = { "basic.vert.spv", "basic.frag.spv" };
-    std::vector<std::string> files = { "voxel.mesh.spv", "basic.frag.spv" };
+    std::vector<std::string> files = { "voxel.task.spv", "voxel.mesh.spv", "basic.frag.spv" };
 
     std::vector<std::unique_ptr<imr::ShaderModule>> modules;
     std::vector<std::unique_ptr<imr::ShaderEntryPoint>> entry_points;
@@ -122,6 +122,8 @@ struct Shaders {
                 stage = VK_SHADER_STAGE_FRAGMENT_BIT;
             else if (filename.ends_with("mesh.spv"))
                 stage = VK_SHADER_STAGE_MESH_BIT_EXT;
+            else if (filename.ends_with("task.spv"))
+                stage = VK_SHADER_STAGE_TASK_BIT_EXT;
             else
                 throw std::runtime_error("Unknown suffix");
             modules.push_back(std::make_unique<imr::ShaderModule>(d, std::move(filename)));
@@ -345,7 +347,7 @@ int main(int argc, char** argv) {
                         //vkCmdBindVertexBuffers(cmdbuf, 0, 1, &mesh->buf->handle, tmpPtr((VkDeviceSize) 0));
 
                         //assert(mesh->num_verts > 0);
-                        device.dispatch.cmdDrawMeshTasksEXT(cmdbuf, 1, 16, 16);
+                        device.dispatch.cmdDrawMeshTasksEXT(cmdbuf, 1, 1, 1);
                         //vkCmdDraw(cmdbuf, mesh->num_verts, 1, 0, 0);
                     }
 
