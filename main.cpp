@@ -17,6 +17,7 @@ struct {
     mat4 matrix;
     ivec3 chunk_position;
     float time;
+    uint64_t bda;
 } push_constants;
 
 Camera camera = {
@@ -35,7 +36,8 @@ void camera_update(GLFWwindow*, CameraInput* input);
 bool reload_shaders = false;
 
 struct Shaders {
-    std::vector<std::string> files = { "basic.vert.spv", "basic.frag.spv" };
+    //std::vector<std::string> files = { "basic.vert.spv", "basic.frag.spv" };
+    std::vector<std::string> files = { "voxel.mesh.spv", "basic.frag.spv" };
 
     std::vector<std::unique_ptr<imr::ShaderModule>> modules;
     std::vector<std::unique_ptr<imr::ShaderEntryPoint>> entry_points;
@@ -118,6 +120,8 @@ struct Shaders {
                 stage = VK_SHADER_STAGE_VERTEX_BIT;
             else if (filename.ends_with("frag.spv"))
                 stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+            else if (filename.ends_with("mesh.spv"))
+                stage = VK_SHADER_STAGE_MESH_BIT_EXT;
             else
                 throw std::runtime_error("Unknown suffix");
             modules.push_back(std::make_unique<imr::ShaderModule>(d, std::move(filename)));
@@ -150,7 +154,7 @@ int main(int argc, char** argv) {
     });
 
     imr::Context context;
-    imr::Device device(context);
+    imr::Device device(context, [&](vkb::PhysicalDeviceSelector& b) { b.add_required_extension(VK_EXT_MESH_SHADER_EXTENSION_NAME); });
     imr::Swapchain swapchain(device, window);
     imr::FpsCounter fps_counter;
 
@@ -277,7 +281,7 @@ int main(int argc, char** argv) {
                         continue;
                     }
 
-                    auto mesh_lock = chunk->mesh.lock_mut();
+                    /*auto mesh_lock = chunk->mesh.lock_mut();
                     auto& mesh_container = *mesh_lock;
                     if (!mesh_container.mesh) {
                         if (mesh_container.task_spawned)
@@ -311,17 +315,36 @@ int main(int argc, char** argv) {
                     }
                     auto mesh = mesh_container.mesh;
                     if (mesh->num_verts == 0)
+                        continue;*/
+
+                    auto data_lock = chunk->gpu_data.lock_mut();
+                    auto& data_container = *data_lock;
+                    if (!data_container.data) {
+                        if (data_container.task_spawned)
+                            continue;
+
+                        data_container.task_spawned = true;
+                        tp.schedule([&device, chunk]() {
+                           auto data = std::make_shared<ChunkVoxelData>(device, chunk);
+                           auto data_lock = chunk->gpu_data.lock_mut();
+                           data_lock->data = data;
+                           data_lock->task_spawned = false;
+                        });
                         continue;
+                    }
+                    auto data = data_container.data;
 
                     push_constants.chunk_position = { chunk->cx, 0, chunk->cz };
-                    vkCmdPushConstants(cmdbuf, pipeline->layout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push_constants), &push_constants);
+                    push_constants.bda = data->buf->device_address();
+                    vkCmdPushConstants(cmdbuf, pipeline->layout(), VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(push_constants), &push_constants);
 
-                    vkCmdBindVertexBuffers(cmdbuf, 0, 1, &mesh->buf->handle, tmpPtr((VkDeviceSize) 0));
+                    //vkCmdBindVertexBuffers(cmdbuf, 0, 1, &mesh->buf->handle, tmpPtr((VkDeviceSize) 0));
 
-                    assert(mesh->num_verts > 0);
-                    vkCmdDraw(cmdbuf, mesh->num_verts, 1, 0, 0);
+                    //assert(mesh->num_verts > 0);
+                    device.dispatch.cmdDrawMeshTasksEXT(cmdbuf, 1, 128, 16);
+                    //vkCmdDraw(cmdbuf, mesh->num_verts, 1, 0, 0);
 
-                    context.frame().addCleanupAction([=, mesh = mesh]() {
+                    context.frame().addCleanupAction([=, data = data]() {
 
                     });
                 }

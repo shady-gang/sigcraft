@@ -242,7 +242,31 @@ ChunkMesh::ChunkMesh(imr::Device& d, ChunkNeighbors& n) {
     void* buffer = g.data();
 
     if (buffer_size > 0) {
-        buf = std::make_unique<imr::Buffer>(d, buffer_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        buf = std::make_unique<imr::Buffer>(d, buffer_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         buf->uploadDataSync(0, buffer_size, buffer);
     }
+}
+
+unsigned encode_chunkcoord(unsigned x, unsigned y, unsigned z) {
+    return x + (y + z * CUNK_CHUNK_MAX_HEIGHT) * CUNK_CHUNK_SIZE;
+}
+
+std::tuple<unsigned, unsigned, unsigned> decode_chunkcoord(unsigned coord) {
+    unsigned x = coord % CUNK_CHUNK_SIZE;
+    coord /= CUNK_CHUNK_SIZE;
+    unsigned y = coord % CUNK_CHUNK_MAX_HEIGHT;
+    coord /= CUNK_CHUNK_MAX_HEIGHT;
+    unsigned z = coord;
+    return {x, y, z};
+}
+
+ChunkVoxelData::ChunkVoxelData(imr::Device& d, std::shared_ptr<Chunk> c) {
+    unsigned buffer[CUNK_CHUNK_SIZE * CUNK_CHUNK_SIZE * CUNK_CHUNK_MAX_HEIGHT];
+    for (int x = 0; x < CUNK_CHUNK_SIZE; x++)
+        for (int y = 0; y < CUNK_CHUNK_MAX_HEIGHT; y++)
+            for (int z = 0; z < CUNK_CHUNK_SIZE; z++) {
+                buffer[encode_chunkcoord(x, y, z)] = chunk_get_block_data(&c->data, x, y, z);
+            }
+    buf = std::make_unique<imr::Buffer>(d, buffer_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    buf->uploadDataSync(0, buffer_size, buffer);
 }

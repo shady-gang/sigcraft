@@ -9,6 +9,7 @@ extern "C" {
 }
 
 struct ChunkMesh;
+struct ChunkVoxelData;
 
 #include "rustex.h"
 #include "threadpool.h"
@@ -46,11 +47,16 @@ struct Chunk {
     int cx, cz;
     McChunk* enkl_chunk = nullptr;
     ChunkData data = {};
-    struct MeshContainer {
-        std::shared_ptr<ChunkMesh> mesh;
+    //struct MeshContainer {
+    //    std::shared_ptr<ChunkMesh> mesh;
+    //    bool task_spawned = false;
+    //};
+    //Mutex<MeshContainer> mesh;
+    struct DataContainer {
+        std::shared_ptr<ChunkVoxelData> data;
         bool task_spawned = false;
     };
-    Mutex<MeshContainer> mesh;
+    Mutex<DataContainer> gpu_data;
 
     Chunk(Region&, int x, int z);
     Chunk(const Chunk&) = delete;

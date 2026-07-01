@@ -1,0 +1,68 @@
+#version 450
+#extension GL_EXT_mesh_shader : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_buffer_reference : require
+
+layout(local_size_x = 16, local_size_y = 1, local_size_z = 1) in;
+layout(triangles, max_vertices = 48, max_primitives = 16) out;
+
+layout(scalar, buffer_reference) buffer VoxelDataRef {
+  uint data[];
+};
+
+layout(scalar, push_constant) uniform T {
+    mat4 matrix;
+    ivec3 chunk_position;
+    float time;
+    VoxelDataRef chunk_data;
+} push_constants;
+
+layout(location = 0)
+out vec4 colorOut[];
+
+#define CUNK_CHUNK_MAX_HEIGHT 384
+#define CUNK_CHUNK_SIZE 16
+
+uint encode_chunkcoord(uint x, uint y, uint z) {
+    return x + (y + z * CUNK_CHUNK_MAX_HEIGHT) * CUNK_CHUNK_SIZE;
+}
+
+uint safe_access(uint x, uint y, uint z) {
+  if (x < CUNK_CHUNK_SIZE && y < CUNK_CHUNK_MAX_HEIGHT && z < CUNK_CHUNK_SIZE) {
+    return push_constants.chunk_data.data[encode_chunkcoord(x, y, z)];
+  }
+  return 0;
+}
+
+uint safe_access(uvec3 v) {
+  return safe_access(v.x, v.y, v.z);
+}
+
+bool need_face(uvec3 pos, ivec3 delta) {
+  return (safe_access(pos) != 0) && (safe_access(uvec3(ivec3(pos) + delta)) == 0);
+}
+
+void main()
+{
+  uint vertexCount = 48;
+  uint triangleCount = 16;
+  SetMeshOutputsEXT(vertexCount, triangleCount);
+
+  uvec3 block_pos = uvec3(gl_LocalInvocationID.x, gl_WorkGroupID.yz);
+
+  if (need_face(block_pos, ivec3(0, 1, 0))) {
+      gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 0].gl_Position = push_constants.matrix * vec4(vec3(push_constants.chunk_position) * 16.0 + block_pos + vec3(1.0, 0.0, 0), 1.0);
+      gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 1].gl_Position = push_constants.matrix * vec4(vec3(push_constants.chunk_position) * 16.0 + block_pos + vec3(1.0, 0.0, 1), 1.0);
+      gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 2].gl_Position = push_constants.matrix * vec4(vec3(push_constants.chunk_position) * 16.0 + block_pos + vec3(0.0, 0.0, 1), 1.0);
+  } else {
+      gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 0].gl_Position = vec4(0);
+      gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 1].gl_Position = vec4(0);
+      gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 2].gl_Position = vec4(0);
+  }
+
+  gl_PrimitiveTriangleIndicesEXT[gl_LocalInvocationID.x + 0] = uvec3(gl_LocalInvocationID.x * 3 + 0, gl_LocalInvocationID.x * 3 + 1, gl_LocalInvocationID.x * 3 + 2);
+
+  colorOut[gl_LocalInvocationID.x * 3 + 0] = vec4(1.0, 0.0, 0.0, 1.0);
+  colorOut[gl_LocalInvocationID.x * 3 + 1] = vec4(1.0, 0.0, 0.0, 1.0);
+  colorOut[gl_LocalInvocationID.x * 3 + 2] = vec4(1.0, 0.0, 0.0, 1.0);
+}

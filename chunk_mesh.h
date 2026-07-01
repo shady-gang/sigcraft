@@ -33,4 +33,12 @@ struct ChunkMesh {
     static_assert(sizeof(Vertex) == sizeof(uint8_t) * 16);
 };
 
+struct ChunkVoxelData {
+    std::unique_ptr<imr::Buffer> buf;
+
+    ChunkVoxelData(imr::Device&, std::shared_ptr<Chunk>);
+
+    constexpr static size_t buffer_size = CUNK_CHUNK_SIZE * CUNK_CHUNK_SIZE * CUNK_CHUNK_MAX_HEIGHT * sizeof(int);
+};
+
 #endif
