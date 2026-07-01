@@ -47,6 +47,10 @@ uint encode_chunkcoord(uint x, uint y, uint z, uint lod) {
     return lod_offsets[lod] + x + (y + z * lod_res[lod]) * lod_res[lod];
 }
 
+uint encode_chunkcoord(uvec3 v, uint lod) {
+    return encode_chunkcoord(v.x, v.y, v.z, lod);
+}
+
 int world2chunk(int x) {
     if (x >= 0) return x / 16;
     return (x - 15) / 16;
@@ -58,6 +62,23 @@ ivec3 world2chunk(ivec3 v) {
 
 int encode_neighboring_chunk_idx(int dx, int dy, int dz) {
     return ((dx + 1) * 3 + (dy + 1)) * 3 + (dz + 1);
+}
+
+uint lod_access(VoxelDataRef chunk, uvec3 pos) {
+    for (int lod = 4; lod >= 0; lod--) {
+        uvec3 lod_pos = pos / lod_res[lod];
+        uint data = chunk.data[encode_chunkcoord(lod_pos, lod)];
+        if (lod == 0) {
+            return data;
+        }
+        if (data == 0)
+            return 0;
+        // completely filled
+        if (data == 2)
+            return 2;
+    }
+    // unreachable
+    return 0;
 }
 
 uint safe_access(int x, int y, int z) {
