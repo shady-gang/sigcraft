@@ -24,6 +24,7 @@ layout(scalar, push_constant) uniform T {
     mat4 matrix;
     float time;
     ivec3 camera_chunk_pos;
+    int debug;
     int visible_chunk_radius;
     VisibleChunksArrayRef visible_chunks;
 } push_constants;

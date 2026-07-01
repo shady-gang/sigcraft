@@ -23,6 +23,7 @@ layout(scalar, push_constant) uniform T {
     mat4 matrix;
     float time;
     ivec3 camera_chunk_pos;
+    int debug;
     int visible_chunk_radius;
     VisibleChunksArrayRef visible_chunks;
 } push_constants;
@@ -64,11 +65,12 @@ int encode_neighboring_chunk_idx(int dx, int dy, int dz) {
     return ((dx + 1) * 3 + (dy + 1)) * 3 + (dz + 1);
 }
 
-uint lod_access(VoxelDataRef chunk, uvec3 pos) {
+uint lod_access(VoxelDataRef chunk, uvec3 pos, out int out_lod) {
     if (uint64_t(chunk) == 0)
         return 0;
 
     for (int lod = 4; lod >= 0; lod--) {
+        out_lod = lod;
         uvec3 lod_pos = pos / lod_res[4-lod];
         uint data = chunk.data[encode_chunkcoord(lod_pos, lod)];
         if (lod == 0) {
@@ -84,7 +86,7 @@ uint lod_access(VoxelDataRef chunk, uvec3 pos) {
     return 0;
 }
 
-uint safe_access(int x, int y, int z) {
+uint safe_access(int x, int y, int z, out int out_lod) {
     int ox = 0, oy = 0, oz = 0;
     if (x >= 16) {
         ox = 1;
@@ -116,7 +118,7 @@ uint safe_access(int x, int y, int z) {
 
     if (x >= 0 && x < CUNK_CHUNK_SIZE && y >= 0 && z >= 0 && y < CUNK_CHUNK_SIZE && z < CUNK_CHUNK_SIZE) {
         VoxelDataRef voxel_data = VoxelDataRef(ts_in.neighboring_chunks[encode_neighboring_chunk_idx(ox, oy, oz)]);
-        return lod_access(voxel_data, uvec3(x, y, z));
+        return lod_access(voxel_data, uvec3(x, y, z), out_lod);
     }
     //ivec3 chunk_pos = world2chunk(ivec3(x, y, z));
     //ivec3 delta = chunk_pos - push_constants.camera_chunk_pos;
@@ -126,12 +128,25 @@ uint safe_access(int x, int y, int z) {
     return 0;
 }
 
-uint safe_access(ivec3 v) {
-    return safe_access(v.x, v.y, v.z);
+uint safe_access(ivec3 v, out int out_lod) {
+    return safe_access(v.x, v.y, v.z, out_lod);
 }
 
-bool need_face(ivec3 pos, ivec3 delta) {
-    return (safe_access(pos) != 0) && (safe_access(pos + delta) == 0);
+bool need_face(ivec3 pos, ivec3 delta, out int out_lod) {
+    int dc;
+    return (safe_access(pos, dc) != 0) && (safe_access(pos + delta, out_lod) == 0);
+}
+
+vec3 lod2color(int lod) {
+    if (lod == 4)
+        return vec3(0.0, 0.0, 1.0);
+    if (lod == 3)
+        return vec3(0.0, 1.0, 1.0);
+    if (lod == 2)
+        return vec3(1.0, 1.0, 0.0);
+    if (lod == 1)
+        return vec3(1.0, 0.75, 0.0);
+    return vec3(1.0, 0.0, 0.0);
 }
 
 void main() {
@@ -145,7 +160,9 @@ void main() {
 
     color *= (ts_in.chunk_position.y * 16.0 + block_pos.y) / 128.0;
 
-    if (need_face(block_pos, ivec3(0, 1, 0))) {
+    int lod;
+
+    if (need_face(block_pos, ivec3(0, 1, 0), lod)) {
         gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 0].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + block_pos + vec3(1.0, 0.0, 0), 1.0);
         gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 1].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + block_pos + vec3(1.0, 0.0, 1), 1.0);
         gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 2].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + block_pos + vec3(0.0, 0.0, 1), 1.0);
@@ -154,6 +171,11 @@ void main() {
         gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 1].gl_Position = vec4(0);
         gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 2].gl_Position = vec4(0);
     }
+
+    if (push_constants.debug == 1)
+        color = vec3(block_pos) / 16.0;
+    if (push_constants.debug == 2)
+        color = lod2color(lod);
 
     gl_PrimitiveTriangleIndicesEXT[gl_LocalInvocationID.x + 0] = uvec3(gl_LocalInvocationID.x * 3 + 0, gl_LocalInvocationID.x * 3 + 1, gl_LocalInvocationID.x * 3 + 2);
 

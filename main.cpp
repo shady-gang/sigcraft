@@ -17,6 +17,7 @@ struct {
     mat4 matrix;
     float time;
     ivec3 camera_chunk_pos;
+    int debug;
     int visible_chunks_radius;
     uint64_t visible_chunks_array;
 } push_constants;
@@ -154,6 +155,8 @@ int main(int argc, char** argv) {
             radius++;
         if (key == GLFW_KEY_PAGE_DOWN && action == GLFW_PRESS)
             radius--;
+        if (key == GLFW_KEY_F1 && action == GLFW_PRESS)
+            push_constants.debug = (push_constants.debug + 1) % 5;
     });
 
     imr::Context context;
