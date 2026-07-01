@@ -156,7 +156,7 @@ int main(int argc, char** argv) {
         if (key == GLFW_KEY_PAGE_DOWN && action == GLFW_PRESS)
             radius--;
         if (key == GLFW_KEY_F1 && action == GLFW_PRESS)
-            push_constants.debug = (push_constants.debug + 1) % 5;
+            push_constants.debug = (push_constants.debug + 1) % 16;
     });
 
     imr::Context context;
@@ -178,7 +178,12 @@ int main(int argc, char** argv) {
     auto& vk = device.dispatch;
     while (!glfwWindowShouldClose(window)) {
         fps_counter.tick();
-        fps_counter.updateGlfwWindowTitle(window);
+        std::string s;
+        s += "radius: ";
+        s += std::to_string(radius);
+        s += ", debug = ";
+        s += std::to_string(push_constants.debug);
+        fps_counter.updateGlfwWindowTitle(window, s);
 
         swapchain.renderFrameSimplified([&](imr::Swapchain::SimplifiedRenderContext& context) {
             camera_update(window, &camera_input);

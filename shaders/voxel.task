@@ -2,6 +2,7 @@
 #extension GL_EXT_mesh_shader : require
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
@@ -31,8 +32,12 @@ layout(scalar, push_constant) uniform T {
 
 struct Payload {
     ivec3 chunk_position;
+    uint16_t sub_chunk[64];
     uint64_t neighboring_chunks[27];
 };
+
+
+uint64_t neighboring_chunks_2[27];
 
 taskPayloadSharedEXT Payload ts_out;
 
@@ -57,26 +62,49 @@ uint encode_chunkcoord(uvec3 v, uint lod) {
     return encode_chunkcoord(v.x, v.y, v.z, lod);
 }
 
-uint lod_access(VoxelDataRef chunk, uvec3 pos) {
-    for (int lod = 4; lod >= 0; lod--) {
-        uvec3 lod_pos = pos / lod_res[lod];
-        uint data = chunk.data[encode_chunkcoord(lod_pos, lod)];
-        if (lod == 0) {
-            return data;
-        }
-        if (data == 0)
-        return 0;
-        // completely filled
-        if (data == 2)
-        return 2;
-    }
-    // unreachable
-    return 0;
-}
-
 bool is_chunk_solid(VoxelDataRef chunk) {
     uint data = chunk.data[encode_chunkcoord(uvec3(0), 4)];
     return data == 2;
+}
+
+uint16_t pack_subchunk_idx(uint cx, uint cy, uint cz) {
+    return uint16_t(((cz) << 4 | cy) << 4 | cx);
+}
+
+bool is_subchunk_full(VoxelDataRef chunk, uint sc_x, uint sc_y, uint sc_z) {
+    if (uint64_t(chunk) == 0)
+        return false;
+    return chunk.data[encode_chunkcoord(uvec3(sc_x, sc_y, sc_z), 2)] == 2;
+}
+
+bool check_subchunk_full(int sc_rx, int sc_ry, int sc_rz) {
+    int dcx = 0, dcy = 0, dcz = 0;
+    if (sc_rx < 0) {
+        dcx = -1;
+        sc_rx += 4;
+    }
+    if (sc_ry < 0) {
+        dcy = -1;
+        sc_ry += 4;
+    }
+    if (sc_rz < 0) {
+        dcz = -1;
+        sc_rz += 4;
+    }
+    if (sc_rx >= 4) {
+        dcx = 1;
+        sc_rx -= 4;
+    }
+    if (sc_ry >= 4) {
+        dcy = 1;
+        sc_ry -= 4;
+    }
+    if (sc_rz >= 4) {
+        dcz = 1;
+        sc_rz -= 4;
+    }
+    VoxelDataRef c = VoxelDataRef(neighboring_chunks_2[encode_neighboring_chunk_idx(dcx, dcy, dcz)]);
+    return is_subchunk_full(c, uint(sc_rx), uint(sc_ry), uint(sc_rz));
 }
 
 void main() {
@@ -107,12 +135,15 @@ void main() {
             int idx = encode_neighboring_chunk_idx(dx, dy, dz);
 #endif
             ivec3 neighboring_chunk_position = chunk_position + ivec3(dx, dy, dz);
-            if (neighboring_chunk_position.y < 0 || neighboring_chunk_position.y >= 24)
+            if (neighboring_chunk_position.y < 0 || neighboring_chunk_position.y >= 24) {
                 ts_out.neighboring_chunks[idx] = 0;
-            else {
+                neighboring_chunks_2[idx] = 0;
+            } else {
                 ivec3 delta = neighboring_chunk_position - push_constants.camera_chunk_pos;
-                if (abs(delta.x) > push_constants.visible_chunk_radius || abs(delta.z) > push_constants.visible_chunk_radius)
+                if (abs(delta.x) > push_constants.visible_chunk_radius || abs(delta.z) > push_constants.visible_chunk_radius) {
                     ts_out.neighboring_chunks[idx] = 0;
+                    neighboring_chunks_2[idx] = 0;
+                }
                 else {
                     uint visible_chunks_array_neighbor_x = delta.x + push_constants.visible_chunk_radius;
                     uint visible_chunks_array_neighbor_z = delta.z + push_constants.visible_chunk_radius;
@@ -120,6 +151,7 @@ void main() {
 
                     VoxelDataRef chunk = push_constants.visible_chunks.visible[visible_chunks_array_idx].sections[section + dy];
                     ts_out.neighboring_chunks[idx] = uint64_t(chunk);
+                    neighboring_chunks_2[idx] = uint64_t(chunk);
 
                     bool is_direct_neighbor = abs(dx) + abs(dy) + abs(dz) <= 1;
                     if (is_direct_neighbor) {
@@ -130,15 +162,41 @@ void main() {
             }
         }
 
-        ts_out.neighboring_chunks[encode_neighboring_chunk_idx(0,0,0)] = uint64_t(ptr);
+        //ts_out.neighboring_chunks[encode_neighboring_chunk_idx(0,0,0)] = uint64_t(ptr);
 
 #if PARALLEL_NEIGHBORS_GATHER
         occluded_direct_neighbors = subgroupAdd(occluded_direct_neighbors);
 #endif
 
-        if (occluded_direct_neighbors < 7) {
+        if (occluded_direct_neighbors < 7 || push_constants.debug == 4) {
             ts_out.chunk_position = chunk_position;
-            EmitMeshTasksEXT(1, 16, 16);
+
+            int num_subchunks = 0;
+
+            // use LOD 2
+            for (int sc_x = 0; sc_x < 4; sc_x++)
+            for (int sc_y = 0; sc_y < 4; sc_y++)
+            for (int sc_z = 0; sc_z < 4; sc_z++) {
+                uint data = ptr.data[encode_chunkcoord(uvec3(sc_x, sc_y, sc_z), 2)];
+                if (data == 0)
+                    continue;
+
+                if (data == 2) {
+                    // check if all the neighboring subchunks are also solid
+                    if (check_subchunk_full(sc_x + 1, sc_y, sc_z)
+                     && check_subchunk_full(sc_x - 1, sc_y, sc_z)
+                     && check_subchunk_full(sc_x, sc_y + 1, sc_z)
+                     && check_subchunk_full(sc_x, sc_y - 1, sc_z)
+                     && check_subchunk_full(sc_x, sc_y, sc_z + 1)
+                     && check_subchunk_full(sc_x, sc_y, sc_z - 1)) {
+                        continue;
+                    }
+                }
+
+                ts_out.sub_chunk[num_subchunks] = pack_subchunk_idx(sc_x, sc_y, sc_z);
+                num_subchunks++;
+            }
+            EmitMeshTasksEXT(num_subchunks, 1, 1);
             return;
         }
     }
