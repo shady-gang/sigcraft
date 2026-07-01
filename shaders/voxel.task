@@ -149,7 +149,7 @@ void main() {
                     uint visible_chunks_array_neighbor_z = delta.z + push_constants.visible_chunk_radius;
                     uint visible_chunks_array_neighbor_idx = visible_chunks_array_neighbor_x * visible_chunks_array_size + visible_chunks_array_neighbor_z;
 
-                    VoxelDataRef chunk = push_constants.visible_chunks.visible[visible_chunks_array_idx].sections[section + dy];
+                    VoxelDataRef chunk = push_constants.visible_chunks.visible[visible_chunks_array_neighbor_idx].sections[section + dy];
                     ts_out.neighboring_chunks[idx] = uint64_t(chunk);
                     neighboring_chunks_2[idx] = uint64_t(chunk);
 
