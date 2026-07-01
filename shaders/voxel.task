@@ -3,6 +3,8 @@
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
@@ -26,7 +28,6 @@ layout(scalar, push_constant) uniform T {
     VisibleChunksArrayRef visible_chunks;
 } push_constants;
 
-
 struct Payload {
     ivec3 chunk_position;
     uint64_t neighboring_chunks[27];
@@ -36,6 +37,45 @@ taskPayloadSharedEXT Payload ts_out;
 
 int encode_neighboring_chunk_idx(int dx, int dy, int dz) {
     return ((dx + 1) * 3 + (dy + 1)) * 3 + (dz + 1);
+}
+
+void decode_neighboring_chunk_idx(int idx, out int dx, out int dy, out int dz) {
+    dz = (idx % 3) - 1;
+    dy = ((idx / 3) % 3) - 1;
+    dx = ((idx / 3) / 3) - 1;
+}
+
+const uint lod_res[] = { 16, 8, 4, 2, 1 };
+const uint lod_offsets[] = { 0, 4096, 4608, 4672, 4680, 4681 };
+
+uint encode_chunkcoord(uint x, uint y, uint z, uint lod) {
+    return lod_offsets[lod] + x + (y + z * lod_res[lod]) * lod_res[lod];
+}
+
+uint encode_chunkcoord(uvec3 v, uint lod) {
+    return encode_chunkcoord(v.x, v.y, v.z, lod);
+}
+
+uint lod_access(VoxelDataRef chunk, uvec3 pos) {
+    for (int lod = 4; lod >= 0; lod--) {
+        uvec3 lod_pos = pos / lod_res[lod];
+        uint data = chunk.data[encode_chunkcoord(lod_pos, lod)];
+        if (lod == 0) {
+            return data;
+        }
+        if (data == 0)
+        return 0;
+        // completely filled
+        if (data == 2)
+        return 2;
+    }
+    // unreachable
+    return 0;
+}
+
+bool is_chunk_solid(VoxelDataRef chunk) {
+    uint data = chunk.data[encode_chunkcoord(uvec3(0), 4)];
+    return data == 2;
 }
 
 void main() {
@@ -51,31 +91,56 @@ void main() {
     uint section = gl_WorkGroupID.y;
 
     VoxelDataRef ptr = push_constants.visible_chunks.visible[visible_chunks_array_idx].sections[section];
+    int occluded_direct_neighbors = 0;
     if (uint64_t(ptr) != 0) {
-        ts_out.chunk_position = chunk_position;
+#define PARALLEL_NEIGHBORS_GATHER 0
+#if PARALLEL_NEIGHBORS_GATHER
+        int idx = int(gl_SubgroupInvocationID);
+        if (idx < 27) {
+            int dx, dy, dz;
+            decode_neighboring_chunk_idx(idx, dx, dy, dz);
+#else
         for (int dx = -1; dx <= 1; dx++)
-            for (int dy = -1; dy <= 1; dy++)
-                for (int dz = -1; dz <= 1; dz++) {
-                    int idx = encode_neighboring_chunk_idx(dx, dy, dz);
-                    ivec3 neighboring_chunk_position = chunk_position + ivec3(dx, dy, dz);
-                    if (neighboring_chunk_position.y < 0 || neighboring_chunk_position.y >= 24)
-                        ts_out.neighboring_chunks[idx] = 0;
-                    else {
-                        ivec3 delta = neighboring_chunk_position - push_constants.camera_chunk_pos;
-                        if (abs(delta.x) > push_constants.visible_chunk_radius || abs(delta.z) > push_constants.visible_chunk_radius)
-                            ts_out.neighboring_chunks[idx] = 0;
-                        else {
-                            uint visible_chunks_array_neighbor_x = delta.x + push_constants.visible_chunk_radius;
-                            uint visible_chunks_array_neighbor_z = delta.z + push_constants.visible_chunk_radius;
-                            uint visible_chunks_array_neighbor_idx = visible_chunks_array_neighbor_x * visible_chunks_array_size + visible_chunks_array_neighbor_z;
-                            ts_out.neighboring_chunks[idx] = uint64_t(push_constants.visible_chunks.visible[visible_chunks_array_idx].sections[section]);
-                        }
-                    }
-                }
+        for (int dy = -1; dy <= 1; dy++)
+        for (int dz = -1; dz <= 1; dz++) {
+            int idx = encode_neighboring_chunk_idx(dx, dy, dz);
+#endif
+            ivec3 neighboring_chunk_position = chunk_position + ivec3(dx, dy, dz);
+            if (neighboring_chunk_position.y < 0 || neighboring_chunk_position.y >= 24)
+                ts_out.neighboring_chunks[idx] = 0;
+            else {
+                ivec3 delta = neighboring_chunk_position - push_constants.camera_chunk_pos;
+                if (abs(delta.x) > push_constants.visible_chunk_radius || abs(delta.z) > push_constants.visible_chunk_radius)
+                    ts_out.neighboring_chunks[idx] = 0;
+                else {
+                    uint visible_chunks_array_neighbor_x = delta.x + push_constants.visible_chunk_radius;
+                    uint visible_chunks_array_neighbor_z = delta.z + push_constants.visible_chunk_radius;
+                    uint visible_chunks_array_neighbor_idx = visible_chunks_array_neighbor_x * visible_chunks_array_size + visible_chunks_array_neighbor_z;
 
-        //ts_out.neighboring_chunks[encode_neighboring_chunk_idx(0,0,0)] = uint64_t(ptr);
-        EmitMeshTasksEXT(1, 16, 16);
-    } else {
-        EmitMeshTasksEXT(0, 0, 0);
+                    VoxelDataRef chunk = push_constants.visible_chunks.visible[visible_chunks_array_idx].sections[section + dy];
+                    ts_out.neighboring_chunks[idx] = uint64_t(chunk);
+
+                    bool is_direct_neighbor = abs(dx) + abs(dy) + abs(dz) <= 1;
+                    if (is_direct_neighbor) {
+                        if (uint64_t(chunk) != 0 && is_chunk_solid(chunk))
+                            occluded_direct_neighbors += 1;
+                    }
+               }
+            }
+        }
+
+        ts_out.neighboring_chunks[encode_neighboring_chunk_idx(0,0,0)] = uint64_t(ptr);
+
+#if PARALLEL_NEIGHBORS_GATHER
+        occluded_direct_neighbors = subgroupAdd(occluded_direct_neighbors);
+#endif
+
+        if (occluded_direct_neighbors < 7) {
+            ts_out.chunk_position = chunk_position;
+            EmitMeshTasksEXT(1, 16, 16);
+            return;
+        }
     }
+    // emit NOTHING
+    EmitMeshTasksEXT(0, 0, 0);
 }

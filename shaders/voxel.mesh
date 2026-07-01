@@ -65,8 +65,11 @@ int encode_neighboring_chunk_idx(int dx, int dy, int dz) {
 }
 
 uint lod_access(VoxelDataRef chunk, uvec3 pos) {
+    if (uint64_t(chunk) == 0)
+        return 0;
+
     for (int lod = 4; lod >= 0; lod--) {
-        uvec3 lod_pos = pos / lod_res[lod];
+        uvec3 lod_pos = pos / lod_res[4-lod];
         uint data = chunk.data[encode_chunkcoord(lod_pos, lod)];
         if (lod == 0) {
             return data;
@@ -82,8 +85,6 @@ uint lod_access(VoxelDataRef chunk, uvec3 pos) {
 }
 
 uint safe_access(int x, int y, int z) {
-    if (y < 0 || y >= CUNK_CHUNK_MAX_HEIGHT)
-        return 0;
     int ox = 0, oy = 0, oz = 0;
     if (x >= 16) {
         ox = 1;
@@ -110,9 +111,12 @@ uint safe_access(int x, int y, int z) {
         z += 16;
     }
 
+    if (y < 0 || y >= CUNK_CHUNK_MAX_HEIGHT)
+        return 0;
+
     if (x >= 0 && x < CUNK_CHUNK_SIZE && y >= 0 && z >= 0 && y < CUNK_CHUNK_SIZE && z < CUNK_CHUNK_SIZE) {
         VoxelDataRef voxel_data = VoxelDataRef(ts_in.neighboring_chunks[encode_neighboring_chunk_idx(ox, oy, oz)]);
-        return voxel_data.data[encode_chunkcoord(x, y, z, 0)];
+        return lod_access(voxel_data, uvec3(x, y, z));
     }
     //ivec3 chunk_pos = world2chunk(ivec3(x, y, z));
     //ivec3 delta = chunk_pos - push_constants.camera_chunk_pos;
@@ -137,6 +141,10 @@ void main() {
 
     ivec3 block_pos = ivec3(gl_LocalInvocationID.x, gl_WorkGroupID.yz);
 
+    vec3 color = vec3(0.75);
+
+    color *= (ts_in.chunk_position.y * 16.0 + block_pos.y) / 128.0;
+
     if (need_face(block_pos, ivec3(0, 1, 0))) {
         gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 0].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + block_pos + vec3(1.0, 0.0, 0), 1.0);
         gl_MeshVerticesEXT[gl_LocalInvocationID.x * 3 + 1].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + block_pos + vec3(1.0, 0.0, 1), 1.0);
@@ -149,7 +157,7 @@ void main() {
 
     gl_PrimitiveTriangleIndicesEXT[gl_LocalInvocationID.x + 0] = uvec3(gl_LocalInvocationID.x * 3 + 0, gl_LocalInvocationID.x * 3 + 1, gl_LocalInvocationID.x * 3 + 2);
 
-    colorOut[gl_LocalInvocationID.x * 3 + 0] = vec4(1.0, 0.0, 0.0, 1.0);
-    colorOut[gl_LocalInvocationID.x * 3 + 1] = vec4(1.0, 0.0, 0.0, 1.0);
-    colorOut[gl_LocalInvocationID.x * 3 + 2] = vec4(1.0, 0.0, 0.0, 1.0);
+    colorOut[gl_LocalInvocationID.x * 3 + 0] = vec4(color, 1.0);
+    colorOut[gl_LocalInvocationID.x * 3 + 1] = vec4(color, 1.0);
+    colorOut[gl_LocalInvocationID.x * 3 + 2] = vec4(color, 1.0);
 }

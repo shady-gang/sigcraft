@@ -248,7 +248,7 @@ ChunkMesh::ChunkMesh(imr::Device& d, ChunkNeighbors& n) {
 }
 
 ChunkVoxelData::ChunkVoxelData(imr::Device& d, std::shared_ptr<Chunk> c) {
-    unsigned buffer[CUNK_CHUNK_SIZE * CUNK_CHUNK_SIZE * CUNK_CHUNK_MAX_HEIGHT];
+    unsigned buffer[lod_offsets[5]];
     for (int section = 0; section < CUNK_CHUNK_SECTIONS_COUNT; section++) {
         int baseY = section * CUNK_CHUNK_SIZE;
         bool empty = true;
@@ -268,23 +268,29 @@ ChunkVoxelData::ChunkVoxelData(imr::Device& d, std::shared_ptr<Chunk> c) {
             for (int x = 0; x < lod_res[lod]; x++)
                 for (int y = 0; y < lod_res[lod]; y++)
                     for (int z = 0; z < lod_res[lod]; z++) {
-                        bool completely_filled = true, empty = true;
-                        for (int rx = x * 2; rx < x * 2 + 1; rx++)
-                            for (int ry = y * 2; ry < y * 2 + 1; ry++)
-                                for (int rz = z * 2; rz < z * 2 + 1; rz++) {
-                                    if (chunk_get_block_data(&c->data, x, baseY + y, z) != 0)
-                                        empty = false;
-                                    else
+                        bool completely_filled = true, completely_empty = true;
+                        for (int rx = x * 2; rx < x * 2 + 2; rx++)
+                            for (int ry = y * 2; ry < y * 2 + 2; ry++)
+                                for (int rz = z * 2; rz < z * 2 + 2; rz++) {
+                                    auto data = buffer[encode_chunkcoord(rx, ry, rz, lod-1)];
+                                    //printf("rx %d ry %d rz %d data %d\n", rx, ry, rz, data);
+                                    if (data != 0)
+                                        completely_empty = false;
+                                    if (data == 0 || (lod > 1 && data != 2))
                                         completely_filled = false;
                                 }
 
                         if (completely_filled)
                             buffer[encode_chunkcoord(x, y, z, lod)] = 2;
-                        else if (empty)
+                        else if (completely_empty)
                             buffer[encode_chunkcoord(x, y, z, lod)] = 0;
                         else
                             buffer[encode_chunkcoord(x, y, z, lod)] = 1;
                     }
+        }
+
+        if (buffer[lod_offsets[4]] == 2) {
+            assert(buffer[lod_offsets[4] - 1] == 2);
         }
 
         buf[section] = std::make_unique<imr::Buffer>(d, buffer_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
