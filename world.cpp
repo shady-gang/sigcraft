@@ -1,6 +1,7 @@
 #include "world.h"
 
 #include <cassert>
+#include <time.h>
 
 World::World(const char* filename) {
     allocator = enkl_get_malloc_free_allocator();
@@ -17,7 +18,10 @@ World::~World() {
             break;
         }
         fprintf(stderr, "Some chunks are still loaded, waiting...");
-        sleep(1);
+        timespec t {
+        };
+        t.tv_nsec = 1000;
+        nanosleep(&t, nullptr);
     }
     cunk_close_mcworld(enkl_world);
 }
