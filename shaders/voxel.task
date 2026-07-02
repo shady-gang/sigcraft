@@ -199,7 +199,8 @@ void main() {
             EmitMeshTasksEXT(num_subchunks, 1, 1);
             return;
         }
-    }
+    } else {
     // emit NOTHING
     EmitMeshTasksEXT(0, 0, 0);
+    }
 }
