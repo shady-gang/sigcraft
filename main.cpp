@@ -160,7 +160,10 @@ int main(int argc, char** argv) {
     });
 
     imr::Context context;
-    imr::Device device(context, [&](vkb::PhysicalDeviceSelector& b) { b.add_required_extension(VK_EXT_MESH_SHADER_EXTENSION_NAME); });
+    imr::Device device(context, [&](vkb::PhysicalDeviceSelector& b) {
+        b.add_required_extension(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+        b.add_required_extension(VK_KHR_SHADER_MAXIMAL_RECONVERGENCE_EXTENSION_NAME);
+    });
     imr::Swapchain swapchain(device, window);
     imr::FpsCounter fps_counter;
 

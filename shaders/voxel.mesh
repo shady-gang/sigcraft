@@ -9,6 +9,7 @@
 #extension GL_KHR_shader_subgroup_arithmetic : require
 #extension GL_KHR_shader_subgroup_vote : require
 #extension GL_EXT_maximal_reconvergence : enable
+#extension GL_EXT_debug_printf : enable
 
 layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
@@ -93,12 +94,17 @@ vec3 heatmap(float lod) {
     return vec3(1.0, 0.0, 0.0);
 }
 
+int vertex_buffer_length;
+int primitive_buffer_length;
+
 void main() {
     SetMeshOutputsEXT(256, 256);
 
     // always zero-out the output primitives array first
     for (int i = 0; i < 8; i++)
-        gl_PrimitiveTriangleIndicesEXT[i * 32 + gl_LocalInvocationIndex] = uvec3(0,0,0);
+        gl_PrimitiveTriangleIndicesEXT[i * 32 + gl_SubgroupInvocationID] = uvec3(0,0,0);
+    vertex_buffer_length = 0;
+    primitive_buffer_length = 0;
     barrier();
 
     int start = 0;
@@ -106,171 +112,118 @@ void main() {
         start = ts_in.end[gl_WorkGroupID.x - 1];
     int end = ts_in.end[gl_WorkGroupID.x];
 
-    int window_length = end - start;
-    uint block_idx = start + gl_LocalInvocationIndex;
-    if (gl_LocalInvocationIndex < window_length && block_idx < 4096) {
-        uvec3 block_pos;
-        decode_block_idx(block_idx, block_pos);
+    //start = 0;
+    //end = 32;
 
-        vec3 color = vec3(gl_WorkGroupID.x * 0.5, gl_WorkGroupID.x * 0.25, gl_WorkGroupID.x * 0.125);
+    if (start >= end)
+        return;
 
-        uint faces = uint(ts_in.faces[block_idx]);
-        uint base_vertex_id = subgroupExclusiveAdd(8);
-        // v0 = (0,0,0)
-        uint v0 = base_vertex_id + 0;
-        gl_MeshVerticesEXT[v0].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + vec3(block_pos) + vec3(0, 0, 0), 1.0);
-        // v1 = (0,0,1)
-        uint v1 = base_vertex_id + 1;
-        gl_MeshVerticesEXT[v1].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + vec3(block_pos) + vec3(0, 0, 1), 1.0);
-        // v2 = (1,0,0)
-        uint v2 = base_vertex_id + 2;
-        gl_MeshVerticesEXT[v2].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + vec3(block_pos) + vec3(1, 0, 0), 1.0);
-        // v3 = (1,0,1)
-        uint v3 = base_vertex_id + 3;
-        gl_MeshVerticesEXT[v3].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + vec3(block_pos) + vec3(1, 0, 1), 1.0);
-        // v4 = (0,1,0)
-        uint v4 = base_vertex_id + 4;
-        gl_MeshVerticesEXT[v4].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + vec3(block_pos) + vec3(0, 1, 0), 1.0);
-        // v5 = (0,1,1)
-        uint v5 = base_vertex_id + 5;
-        gl_MeshVerticesEXT[v5].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + vec3(block_pos) + vec3(0, 1, 1), 1.0);
-        // v6 = (1,1,0)
-        uint v6 = base_vertex_id + 6;
-        gl_MeshVerticesEXT[v6].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + vec3(block_pos) + vec3(1, 1, 0), 1.0);
-        // v7 = (1,1,1)
-        uint v7 = base_vertex_id + 7;
-        gl_MeshVerticesEXT[v7].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + vec3(block_pos) + vec3(1, 1, 1), 1.0);
+    //int window_length = end - start;
+    for (int scan_idx = start; scan_idx < end; scan_idx += 32) {
+        uint block_idx = scan_idx + gl_SubgroupInvocationID;
+        if (block_idx < end && block_idx < 4096) {
+            uvec3 block_pos;
+            decode_block_idx(block_idx, block_pos);
 
-        uint primitive_idx = subgroupExclusiveAdd(bitCount(faces) * 2);
-        if ((faces & 0x1) != 0) {
-            colorOut[primitive_idx] = color;
-            normalOut[primitive_idx] = vec3(0, 1, 0);
-            gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v4, v7, v5);
-            colorOut[primitive_idx] = color;
-            normalOut[primitive_idx] = vec3(0, 1, 0);
-            gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v4, v6, v7);
+            vec3 color = vec3(fract(gl_WorkGroupID.x * 0.5231), fract(gl_WorkGroupID.x * 0.252102), fract(gl_WorkGroupID.x * 0.333));
+
+            uint faces = uint(ts_in.faces[block_idx]);
+            uint num_vertices = faces == 0 ? 0 : 8;
+            int num_faces = bitCount(faces) * 2;
+            uint base_vertex_id = vertex_buffer_length + subgroupExclusiveAdd(num_vertices);
+            uint primitive_idx = primitive_buffer_length + subgroupExclusiveAdd(num_faces);
+
+            int new_vertices = subgroupAdd(int(num_vertices));
+            int new_faces = subgroupAdd(num_faces);
+            int old_vertex_buffer_length = vertex_buffer_length;
+            vertex_buffer_length += new_vertices;
+            primitive_buffer_length += new_faces;
+            if (primitive_buffer_length > 256 || vertex_buffer_length > 256 || base_vertex_id + num_vertices > 256 || primitive_idx + num_faces > 256) {
+            //    if (primitive_buffer_length <= 256 && vertex_buffer_length <= 256)
+            //    debugPrintfEXT("CP [%d %d %d] tid: %d primitive_buffer_length: %d vertex_buffer_length: %d base_vertex_id: %d primitive_idx: %d new_vertices: %d new faces: %d old_vertex_buffer_length: %d num_vertices: %d num_faces: %d\n",
+            //        ts_in.chunk_position.x, ts_in.chunk_position.y, ts_in.chunk_position.z, gl_SubgroupInvocationID,
+            //        primitive_buffer_length, vertex_buffer_length, base_vertex_id, primitive_idx, new_vertices, new_faces, old_vertex_buffer_length, num_vertices, num_faces);
+                return;
+            }
+
+            if (num_vertices > 0) {
+                // v0 = (0,0,0)
+                uint v0 = base_vertex_id + 0;
+                gl_MeshVerticesEXT[v0].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + vec3(block_pos) + vec3(0, 0, 0), 1.0);
+                // v1 = (0,0,1)
+                uint v1 = base_vertex_id + 1;
+                gl_MeshVerticesEXT[v1].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + vec3(block_pos) + vec3(0, 0, 1), 1.0);
+                // v2 = (1,0,0)
+                uint v2 = base_vertex_id + 2;
+                gl_MeshVerticesEXT[v2].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + vec3(block_pos) + vec3(1, 0, 0), 1.0);
+                // v3 = (1,0,1)
+                uint v3 = base_vertex_id + 3;
+                gl_MeshVerticesEXT[v3].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + vec3(block_pos) + vec3(1, 0, 1), 1.0);
+                // v4 = (0,1,0)
+                uint v4 = base_vertex_id + 4;
+                gl_MeshVerticesEXT[v4].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + vec3(block_pos) + vec3(0, 1, 0), 1.0);
+                // v5 = (0,1,1)
+                uint v5 = base_vertex_id + 5;
+                gl_MeshVerticesEXT[v5].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + vec3(block_pos) + vec3(0, 1, 1), 1.0);
+                // v6 = (1,1,0)
+                uint v6 = base_vertex_id + 6;
+                gl_MeshVerticesEXT[v6].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + vec3(block_pos) + vec3(1, 1, 0), 1.0);
+                // v7 = (1,1,1)
+                uint v7 = base_vertex_id + 7;
+                gl_MeshVerticesEXT[v7].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + vec3(block_pos) + vec3(1, 1, 1), 1.0);
+
+                if ((faces & 0x1) != 0) {
+                    colorOut[primitive_idx] = color;
+                    normalOut[primitive_idx] = vec3(0, 1, 0);
+                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v4, v7, v5);
+                    colorOut[primitive_idx] = color;
+                    normalOut[primitive_idx] = vec3(0, 1, 0);
+                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v4, v6, v7);
+                }
+                if ((faces & 0x2) != 0) {
+                    colorOut[primitive_idx] = color;
+                    normalOut[primitive_idx] = vec3(0, -1, 0);
+                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v0, v3, v2);
+                    colorOut[primitive_idx] = color;
+                    normalOut[primitive_idx] = vec3(0, -1, 0);
+                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v0, v1, v3);
+                }
+                if ((faces & 0x4) != 0) {
+                    colorOut[primitive_idx] = color;
+                    normalOut[primitive_idx] = vec3(0, 0, 1);
+                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v1, v5, v7);
+                    colorOut[primitive_idx] = color;
+                    normalOut[primitive_idx] = vec3(0, 0, 1);
+                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v1, v7, v3);
+                }
+                if ((faces & 0x8) != 0) {
+                    colorOut[primitive_idx] = color;
+                    normalOut[primitive_idx] = vec3(0, 0, -1);
+                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v0, v6, v4);
+                    colorOut[primitive_idx] = color;
+                    normalOut[primitive_idx] = vec3(0, 0, -1);
+                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v0, v2, v6);
+                }
+                if ((faces & 0x10) != 0) {
+                    colorOut[primitive_idx] = color;
+                    normalOut[primitive_idx] = vec3(1, 0, 0);
+                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v2, v3, v7);
+                    colorOut[primitive_idx] = color;
+                    normalOut[primitive_idx] = vec3(1, 0, 0);
+                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v2, v7, v6);
+                }
+                if ((faces & 0x20) != 0) {
+                    colorOut[primitive_idx] = color;
+                    normalOut[primitive_idx] = vec3(-1, 0, 0);
+                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v0, v5, v1);
+                    colorOut[primitive_idx] = color;
+                    normalOut[primitive_idx] = vec3(-1, 0, 0);
+                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v0, v4, v5);
+                }
+            }
+        } else {
+            break;
         }
-        if ((faces & 0x2) != 0) {
-            colorOut[primitive_idx] = color;
-            normalOut[primitive_idx] = vec3(0, -1, 0);
-            gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v0, v3, v2);
-            colorOut[primitive_idx] = color;
-            normalOut[primitive_idx] = vec3(0, -1, 0);
-            gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v0, v1, v3);
-        }
-        if ((faces & 0x4) != 0) {
-            colorOut[primitive_idx] = color;
-            normalOut[primitive_idx] = vec3(0, 0, 1);
-            gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v1, v5, v7);
-            colorOut[primitive_idx] = color;
-            normalOut[primitive_idx] = vec3(0, 0, 1);
-            gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v1, v7, v3);
-        }
-        if ((faces & 0x8) != 0) {
-            colorOut[primitive_idx] = color;
-            normalOut[primitive_idx] = vec3(0, 0, -1);
-            gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v0, v6, v4);
-            colorOut[primitive_idx] = color;
-            normalOut[primitive_idx] = vec3(0, 0, -1);
-            gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v0, v2, v6);
-        }
-        if ((faces & 0x10) != 0) {
-            colorOut[primitive_idx] = color;
-            normalOut[primitive_idx] = vec3(1, 0, 0);
-            gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v2, v3, v7);
-            colorOut[primitive_idx] = color;
-            normalOut[primitive_idx] = vec3(1, 0, 0);
-            gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v2, v7, v6);
-        }
-        if ((faces & 0x20) != 0) {
-            colorOut[primitive_idx] = color;
-            normalOut[primitive_idx] = vec3(-1, 0, 0);
-            gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v0, v5, v1);
-            colorOut[primitive_idx] = color;
-            normalOut[primitive_idx] = vec3(-1, 0, 0);
-            gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v0, v4, v5);
-        }
+//break;
     }
-
-    /*int lod;
-
-    gl_PrimitiveTriangleIndicesEXT[gl_LocalInvocationIndex] = uvec3(0,0,0);
-    primitive_counter = 0;
-    barrier();
-
-    if (gl_LocalInvocationIndex < 125) {
-        uint vx = gl_LocalInvocationIndex % 5;
-        uint vy = (gl_LocalInvocationIndex / 5) % 5;
-        uint vz = gl_LocalInvocationIndex / 25;
-        gl_MeshVerticesEXT[gl_LocalInvocationIndex].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) * 16.0 + subchunk_pos * 4 + vec3(vx, vy, vz), 1.0);
-    }
-
-    if (gl_LocalInvocationIndex < 64) {
-        uint cx = gl_LocalInvocationIndex % 4;
-        uint cy = (gl_LocalInvocationIndex / 4) % 4;
-        uint cz = gl_LocalInvocationIndex / 16;
-
-        ivec3 block_pos = ivec3(ivec3(cx, cy, cz) + subchunk_pos * 4);
-
-        vec3 color = vec3(0.75);
-        color *= (ts_in.chunk_position.y * 16.0 + block_pos.y) / 128.0;
-
-        if (push_constants.debug == 1)
-            color = vec3(block_pos) / 16.0;
-        if (push_constants.debug == 2)
-            color = lod2color(lod);
-        if (push_constants.debug == 5)
-            color = heatmap(float(gl_NumWorkGroups.x)*0.25);
-
-        if (need_face(block_pos, ivec3(0, 1, 0), lod)) {
-            uint v0 = vtx_idx(cx + 0, cy + 1, cz + 0);
-            uint v1 = vtx_idx(cx + 1, cy + 1, cz + 0);
-            uint v2 = vtx_idx(cx + 0, cy + 1, cz + 1);
-            uint v3 = vtx_idx(cx + 1, cy + 1, cz + 1);
-
-            uint primitive_idx = atomicAdd(primitive_counter, 1) % 128;
-
-            gl_PrimitiveTriangleIndicesEXT[primitive_idx] = uvec3(v0, v1, v2);
-            colorOut[primitive_idx] = color;
-            normalOut[primitive_idx] = vec3(0, 1, 0);
-        }
-
-        if (need_face(block_pos, ivec3(1, 0, 0), lod)) {
-            uint v0 = vtx_idx(cx + 1, cy + 0, cz + 0);
-            uint v1 = vtx_idx(cx + 1, cy + 1, cz + 0);
-            uint v2 = vtx_idx(cx + 1, cy + 0, cz + 1);
-            uint v3 = vtx_idx(cx + 1, cy + 1, cz + 1);
-
-            uint primitive_idx = atomicAdd(primitive_counter, 1);
-
-            gl_PrimitiveTriangleIndicesEXT[primitive_idx] = uvec3(v0, v2, v1);
-            colorOut[primitive_idx] = color;
-            normalOut[primitive_idx] = vec3(1, 0, 0);
-        }
-
-        if (need_face(block_pos, ivec3(0, 0, 1), lod)) {
-            uint v0 = vtx_idx(cx + 1, cy + 0, cz + 1);
-            uint v1 = vtx_idx(cx + 1, cy + 1, cz + 1);
-            uint v2 = vtx_idx(cx + 0, cy + 0, cz + 1);
-            uint v3 = vtx_idx(cx + 0, cy + 1, cz + 1);
-
-            uint primitive_idx = atomicAdd(primitive_counter, 1);
-
-            gl_PrimitiveTriangleIndicesEXT[primitive_idx] = uvec3(v0, v2, v1);
-        }
-    }
-
-        barrier();
-
-        while (true) {
-            //barrier();
-            uint primitive_idx = atomicAdd(primitive_counter, 1);
-            if (primitive_idx < MAX_TRIS)
-                gl_PrimitiveTriangleIndicesEXT[primitive_idx] = uvec3(0,0,0);
-            else
-                break;
-        }*/
-
-    // colorOut[gl_LocalInvocationIndex * 3 + 1] = vec4(color, 1.0);
-    // colorOut[gl_LocalInvocationIndex * 3 + 2] = vec4(color, 1.0);
 }
