@@ -2,12 +2,14 @@
 #extension GL_EXT_mesh_shader : require
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_EXT_maximal_reconvergence : enable
 
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
 layout(scalar, buffer_reference) buffer VoxelDataRef {
     uint data[];
@@ -174,9 +176,14 @@ void main() {
             int num_subchunks = 0;
 
             // use LOD 2
-            for (int sc_x = 0; sc_x < 4; sc_x++)
-            for (int sc_y = 0; sc_y < 4; sc_y++)
-            for (int sc_z = 0; sc_z < 4; sc_z++) {
+            //for (int sc_x = 0; sc_x < 4; sc_x++)
+            //for (int sc_y = 0; sc_y < 4; sc_y++)
+            //for (int sc_z = 0; sc_z < 4; sc_z++) {
+            int sc_x =  int(gl_LocalInvocationIndex) % 4;
+            int sc_y = (int(gl_LocalInvocationIndex) / 4) % 4;
+            int sc_z =  int(gl_LocalInvocationIndex) / 16;
+            for (; sc_z < 4; sc_z+=2) {
+                num_subchunks = subgroupMax(num_subchunks);
                 uint data = ptr.data[encode_chunkcoord(uvec3(sc_x, sc_y, sc_z), 2)];
                 if (data == 0)
                     continue;
@@ -193,9 +200,10 @@ void main() {
                     }
                 }
 
-                ts_out.sub_chunk[num_subchunks] = pack_subchunk_idx(sc_x, sc_y, sc_z);
-                num_subchunks++;
+                ts_out.sub_chunk[num_subchunks+subgroupExclusiveAdd(1)] = pack_subchunk_idx(sc_x, sc_y, sc_z);
+                num_subchunks+=subgroupAdd(1);
             }
+            num_subchunks = subgroupMax(num_subchunks);
             EmitMeshTasksEXT(num_subchunks, 1, 1);
             return;
         }
