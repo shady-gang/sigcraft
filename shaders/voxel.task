@@ -7,9 +7,10 @@
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_vote : require
 #extension GL_EXT_maximal_reconvergence : enable
 
-layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 2, local_size_y = 16, local_size_z = 1) in;
 
 layout(scalar, buffer_reference) buffer VoxelDataRef {
     uint data[];
@@ -23,6 +24,8 @@ layout(scalar, buffer_reference) buffer VisibleChunksArrayRef {
     ChunkSections visible[];
 };
 
+#define CUNK_CHUNK_SIZE 16
+
 layout(scalar, push_constant) uniform T {
     mat4 matrix;
     float time;
@@ -34,14 +37,15 @@ layout(scalar, push_constant) uniform T {
 
 struct Payload {
     ivec3 chunk_position;
-    uint16_t sub_chunk[64];
-    uint64_t neighboring_chunks[27];
+    uint8_t faces[4096];
+    uint16_t end[205]; /* 96 */
 };
 
+taskPayloadSharedEXT Payload ts_out;
+
+shared uint next_meshlet_starts_at;
 
 uint64_t neighboring_chunks_2[27];
-
-taskPayloadSharedEXT Payload ts_out;
 
 int encode_neighboring_chunk_idx(int dx, int dy, int dz) {
     return ((dx + 1) * 3 + (dy + 1)) * 3 + (dz + 1);
@@ -69,57 +73,90 @@ bool is_chunk_solid(VoxelDataRef chunk) {
     return data == 2;
 }
 
-uint16_t pack_subchunk_idx(uint cx, uint cy, uint cz) {
-    return uint16_t(((cz) << 4 | cy) << 4 | cx);
-}
-
-bool is_subchunk_full(VoxelDataRef chunk, uint sc_x, uint sc_y, uint sc_z) {
+uint lod_access(VoxelDataRef chunk, uvec3 pos) {
     if (uint64_t(chunk) == 0)
-        return false;
-    return chunk.data[encode_chunkcoord(uvec3(sc_x, sc_y, sc_z), 2)] == 2;
+        return 0;
+
+    for (int lod = push_constants.debug == 3 ? 4 : 0; lod >= 0; lod--) {
+        uvec3 lod_pos = pos / lod_res[4-lod];
+        uint data = chunk.data[encode_chunkcoord(lod_pos, lod)];
+        if (lod == 0) {
+            return data;
+        }
+        if (data == 0)
+            return 0;
+        // completely filled
+        if (data == 2)
+            return 2;
+    }
+    // unreachable
+    return 0;
 }
 
-bool check_subchunk_full(int sc_rx, int sc_ry, int sc_rz) {
-    int dcx = 0, dcy = 0, dcz = 0;
-    if (sc_rx < 0) {
-        dcx = -1;
-        sc_rx += 4;
+uint safe_access(int x, int y, int z) {
+    int ox = 0, oy = 0, oz = 0;
+    if (x >= 16) {
+        ox = 1;
+        x -= 16;
     }
-    if (sc_ry < 0) {
-        dcy = -1;
-        sc_ry += 4;
+    if (y >= 16) {
+        oy = 1;
+        y -= 16;
     }
-    if (sc_rz < 0) {
-        dcz = -1;
-        sc_rz += 4;
+    if (z >= 16) {
+        oz = 1;
+        z -= 16;
     }
-    if (sc_rx >= 4) {
-        dcx = 1;
-        sc_rx -= 4;
+    if (x < 0) {
+        ox = -1;
+        x += 16;
     }
-    if (sc_ry >= 4) {
-        dcy = 1;
-        sc_ry -= 4;
+    if (y < 0) {
+        oy = -1;
+        y += 16;
     }
-    if (sc_rz >= 4) {
-        dcz = 1;
-        sc_rz -= 4;
+    if (z < 0) {
+        oz = -1;
+        z += 16;
     }
-    VoxelDataRef c = VoxelDataRef(neighboring_chunks_2[encode_neighboring_chunk_idx(dcx, dcy, dcz)]);
-    return is_subchunk_full(c, uint(sc_rx), uint(sc_ry), uint(sc_rz));
+
+    if (x >= 0 && x < CUNK_CHUNK_SIZE && y >= 0 && y < CUNK_CHUNK_SIZE && z >= 0 && z < CUNK_CHUNK_SIZE) {
+        VoxelDataRef voxel_data = VoxelDataRef(neighboring_chunks_2[encode_neighboring_chunk_idx(ox, oy, oz)]);
+        return lod_access(voxel_data, uvec3(x, y, z));
+    }
+    return 0;
+}
+
+uint safe_access(ivec3 v) {
+    return safe_access(v.x, v.y, v.z);
+}
+
+bool is_solid_block(ivec3 pos) {
+    return safe_access(pos) != 0;
+}
+
+// TODO: pre-compute a more exact approximation that considers neighboring faces and store that in a const array
+int approx_unique_cube_vertices(uint8_t faces_mask) {
+    int faces_count = bitCount(faces_mask);
+    if (faces_count == 0)
+        return 0;
+    if (faces_count == 1)
+        return 4;
+    return 8;
 }
 
 void main() {
+
     // gl_WorkGroupID
     int visible_chunks_array_size = push_constants.visible_chunk_radius * 2 + 1;
     uint visible_chunks_array_idx = gl_WorkGroupID.x * visible_chunks_array_size + gl_WorkGroupID.z;
 
     ivec3 visual_chunk_offset = ivec3(int(gl_WorkGroupID.x) - push_constants.visible_chunk_radius, gl_WorkGroupID.y, int(gl_WorkGroupID.z) - push_constants.visible_chunk_radius);
     ivec3 chunk_position = push_constants.camera_chunk_pos;
-    //chunk_position.y = 0;
+    chunk_position.y = 0;
     chunk_position += visual_chunk_offset;
 
-    uint section = gl_WorkGroupID.y;
+    int section = int(gl_WorkGroupID.y);
 
     VoxelDataRef ptr = push_constants.visible_chunks.visible[visible_chunks_array_idx].sections[section];
     int occluded_direct_neighbors = 0;
@@ -138,21 +175,17 @@ void main() {
 #endif
             ivec3 neighboring_chunk_position = chunk_position + ivec3(dx, dy, dz);
             if (neighboring_chunk_position.y < 0 || neighboring_chunk_position.y >= 24) {
-                ts_out.neighboring_chunks[idx] = 0;
                 neighboring_chunks_2[idx] = 0;
             } else {
                 ivec3 delta = neighboring_chunk_position - push_constants.camera_chunk_pos;
                 if (abs(delta.x) > push_constants.visible_chunk_radius || abs(delta.z) > push_constants.visible_chunk_radius) {
-                    ts_out.neighboring_chunks[idx] = 0;
                     neighboring_chunks_2[idx] = 0;
-                }
-                else {
+                } else {
                     uint visible_chunks_array_neighbor_x = delta.x + push_constants.visible_chunk_radius;
                     uint visible_chunks_array_neighbor_z = delta.z + push_constants.visible_chunk_radius;
                     uint visible_chunks_array_neighbor_idx = visible_chunks_array_neighbor_x * visible_chunks_array_size + visible_chunks_array_neighbor_z;
 
-                    VoxelDataRef chunk = push_constants.visible_chunks.visible[visible_chunks_array_neighbor_idx].sections[section + dy];
-                    ts_out.neighboring_chunks[idx] = uint64_t(chunk);
+                    VoxelDataRef chunk = push_constants.visible_chunks.visible[visible_chunks_array_neighbor_idx].sections[chunk_position.y + dy];
                     neighboring_chunks_2[idx] = uint64_t(chunk);
 
                     bool is_direct_neighbor = abs(dx) + abs(dy) + abs(dz) <= 1;
@@ -171,40 +204,63 @@ void main() {
 #endif
 
         if (occluded_direct_neighbors < 7 || push_constants.debug == 4) {
+            next_meshlet_starts_at = 0;
+            barrier();
+
             ts_out.chunk_position = chunk_position;
 
-            int num_subchunks = 0;
+            // subgroup-coherent
+            int primitives_budget = 0;
+            int vertices_budget = 0;
 
-            // use LOD 2
-            //for (int sc_x = 0; sc_x < 4; sc_x++)
-            //for (int sc_y = 0; sc_y < 4; sc_y++)
-            //for (int sc_z = 0; sc_z < 4; sc_z++) {
-            int sc_x =  int(gl_LocalInvocationIndex) % 4;
-            int sc_y = (int(gl_LocalInvocationIndex) / 4) % 4;
-            int sc_z =  int(gl_LocalInvocationIndex) / 16;
-            for (; sc_z < 4; sc_z+=2) {
-                num_subchunks = subgroupMax(num_subchunks);
-                uint data = ptr.data[encode_chunkcoord(uvec3(sc_x, sc_y, sc_z), 2)];
-                if (data == 0)
-                    continue;
-
-                if (data == 2) {
-                    // check if all the neighboring subchunks are also solid
-                    if (check_subchunk_full(sc_x + 1, sc_y, sc_z)
-                     && check_subchunk_full(sc_x - 1, sc_y, sc_z)
-                     && check_subchunk_full(sc_x, sc_y + 1, sc_z)
-                     && check_subchunk_full(sc_x, sc_y - 1, sc_z)
-                     && check_subchunk_full(sc_x, sc_y, sc_z + 1)
-                     && check_subchunk_full(sc_x, sc_y, sc_z - 1)) {
-                        continue;
+            for (int z = 0; z < 16; z++) {
+                for (int x2 = 0; x2 < 8; x2++) {
+                    ivec3 block_pos = ivec3(gl_LocalInvocationID.x * 8 + x2, gl_LocalInvocationID.y, z);
+                    uint8_t faces = uint8_t(0);
+                    if (is_solid_block(block_pos)) {
+                        if (!is_solid_block(block_pos + ivec3(0,1,0))) {
+                            faces |= uint8_t(0x1);
+                        }
+                        if (!is_solid_block(block_pos + ivec3(0,-1,0))) {
+                            faces |= uint8_t(0x2);
+                        }
+                        if (!is_solid_block(block_pos + ivec3(0,0,1))) {
+                            faces |= uint8_t(0x4);
+                        }
+                        if (!is_solid_block(block_pos + ivec3(0,0,-1))) {
+                            faces |= uint8_t(0x8);
+                        }
+                        if (!is_solid_block(block_pos + ivec3(1,0,0))) {
+                            faces |= uint8_t(0x10);
+                        }
+                        if (!is_solid_block(block_pos + ivec3(-1,0,0))) {
+                            faces |= uint8_t(0x20);
+                        }
                     }
-                }
 
-                ts_out.sub_chunk[num_subchunks+subgroupExclusiveAdd(1)] = pack_subchunk_idx(sc_x, sc_y, sc_z);
-                num_subchunks+=subgroupAdd(1);
+                    ts_out.faces[encode_chunkcoord(uvec3(block_pos), 0)] = faces;
+
+                    /*int primitives_count = bitCount(faces) * 2;
+                    int vertices_count = approx_unique_cube_vertices(faces);
+
+                    while (true) {
+                        int new_primitives_budget = primitives_budget + subgroupInclusiveAdd(primitives_count);
+                        int new_vertices_budget = vertices_budget + subgroupInclusiveAdd(vertices_count);
+
+                        bool over_budget = new_primitives_budget >= 256 || new_vertices_budget >= 256;
+                        if (subgroupAny(over_budget)) {
+
+                        }
+                    }*/
+                }
             }
-            num_subchunks = subgroupMax(num_subchunks);
-            EmitMeshTasksEXT(num_subchunks, 1, 1);
+
+            int num_meshlets = 205;
+            for (int meshlet = 0; meshlet < 205; meshlet++) {
+                ts_out.end[meshlet] = uint16_t(20 + meshlet * 20);
+            }
+
+            EmitMeshTasksEXT(num_meshlets, 1, 1);
             return;
         }
     } else {

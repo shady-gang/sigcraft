@@ -19,12 +19,12 @@ target_link_libraries(sigcraft imr enklume nasl::nasl)
 
 target_include_directories(sigcraft PUBLIC "thirdparty/rustex/")
 
-add_custom_target(basic_vert_spv COMMAND ${GLSLANG_EXE} -V -S vert ${CMAKE_CURRENT_SOURCE_DIR}/shaders/basic.vert -o ${CMAKE_CURRENT_BINARY_DIR}/basic.vert.spv)
+add_custom_target(basic_vert_spv COMMAND ${GLSLANG_EXE} -g -gV -V -S vert ${CMAKE_CURRENT_SOURCE_DIR}/shaders/basic.vert -o ${CMAKE_CURRENT_BINARY_DIR}/basic.vert.spv)
 add_dependencies(sigcraft basic_vert_spv)
-add_custom_target(basic_frag_spv COMMAND ${GLSLANG_EXE} -V -S frag ${CMAKE_CURRENT_SOURCE_DIR}/shaders/basic.frag -o ${CMAKE_CURRENT_BINARY_DIR}/basic.frag.spv --target-env spirv1.6)
+add_custom_target(basic_frag_spv COMMAND ${GLSLANG_EXE} -g -gV -V -S frag ${CMAKE_CURRENT_SOURCE_DIR}/shaders/basic.frag -o ${CMAKE_CURRENT_BINARY_DIR}/basic.frag.spv --target-env spirv1.6)
 add_dependencies(sigcraft basic_frag_spv)
 
-add_custom_target(voxel_mesh_spv COMMAND ${GLSLANG_EXE} -V -S mesh ${CMAKE_CURRENT_SOURCE_DIR}/shaders/voxel.mesh -o ${CMAKE_CURRENT_BINARY_DIR}/voxel.mesh.spv --target-env spirv1.6)
+add_custom_target(voxel_mesh_spv COMMAND ${GLSLANG_EXE} -g -gV -V -S mesh ${CMAKE_CURRENT_SOURCE_DIR}/shaders/voxel.mesh -o ${CMAKE_CURRENT_BINARY_DIR}/voxel.mesh.spv --target-env spirv1.6)
 add_dependencies(sigcraft voxel_mesh_spv)
-add_custom_target(voxel_task_spv COMMAND ${GLSLANG_EXE} -V -S task ${CMAKE_CURRENT_SOURCE_DIR}/shaders/voxel.task -o ${CMAKE_CURRENT_BINARY_DIR}/voxel.task.spv --target-env spirv1.6)
+add_custom_target(voxel_task_spv COMMAND ${GLSLANG_EXE} -g -gV -V -S task ${CMAKE_CURRENT_SOURCE_DIR}/shaders/voxel.task -o ${CMAKE_CURRENT_BINARY_DIR}/voxel.task.spv --target-env spirv1.6)
 add_dependencies(sigcraft voxel_task_spv)

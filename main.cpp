@@ -221,7 +221,7 @@ int main(int argc, char** argv) {
             }
 
             vk.cmdClearColorImage(cmdbuf, image.handle(), VK_IMAGE_LAYOUT_GENERAL, tmpPtr((VkClearColorValue) {
-                .float32 = { 0.0f, 0.0f, 0.0f, 1.0f },
+                .float32 = { 0.0f, 0.0f, 0.3f, 1.0f },
             }), 1, tmpPtr(image.whole_image_subresource_range()));
 
             vk.cmdClearDepthStencilImage(cmdbuf, depthBuffer->handle(), VK_IMAGE_LAYOUT_GENERAL, tmpPtr((VkClearDepthStencilValue) {
