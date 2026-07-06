@@ -36,6 +36,7 @@ CameraInput camera_input;
 void camera_update(GLFWwindow*, CameraInput* input);
 
 bool reload_shaders = false;
+bool wireframe = false;
 
 struct Shaders {
     //std::vector<std::string> files = { "basic.vert.spv", "basic.frag.spv" };
@@ -99,7 +100,7 @@ struct Shaders {
         VkPipelineRasterizationStateCreateInfo rasterization {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 
-            .polygonMode = VK_POLYGON_MODE_FILL,
+            .polygonMode = wireframe ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL,
             .cullMode = VK_CULL_MODE_BACK_BIT,
             .frontFace = VK_FRONT_FACE_CLOCKWISE,
 
@@ -157,6 +158,10 @@ int main(int argc, char** argv) {
             radius--;
         if (key == GLFW_KEY_F1 && action == GLFW_PRESS)
             push_constants.debug = (push_constants.debug + 1) % 16;
+        if (key == GLFW_KEY_F2 && action == GLFW_PRESS) {
+            wireframe ^= true;
+            reload_shaders = true;
+        }
     });
 
     imr::Context context;
