@@ -40,7 +40,8 @@ layout(scalar, push_constant) uniform T {
 struct Payload {
     ivec3 chunk_position;
     uint8_t faces[4096];
-    uint16_t end[205]; /* 96 */
+    uint16_t start[256]; /* 96 */
+    uint16_t end[256]; /* 96 */
 };
 
 taskPayloadSharedEXT Payload ts_out;
@@ -223,6 +224,9 @@ void main() {
 
             int num_meshlets = 0;
 
+            int first = 0;
+            int last = -1;
+
             for (int scan_idx = 0; scan_idx < 4096; scan_idx += 32) {
                 ivec3 block_pos;
                 decode_block_idx(scan_idx + int(gl_SubgroupInvocationID), block_pos);
@@ -277,9 +281,12 @@ void main() {
                             //if (subgroupElect())
                             //    debugPrintfEXT("meshlet %d %d has %d, %d vtx/prims in it\n", num_meshlets, scan_idx, vertices_budget, primitives_budget);
 
+                            ts_out.start[num_meshlets] = uint16_t(first);
                             ts_out.end[num_meshlets++] = uint16_t(scan_idx);
                             primitives_budget = 0;
                             vertices_budget = 0;
+
+                            first = -1;
                         } else {
                             uint furthest_not_over_budget = subgroupBallotFindMSB(subgroupBallot(!over_budget));
 
@@ -294,11 +301,24 @@ void main() {
                             int biggest_viable_primitive_budget = subgroupMax(over_budget ? 0 : new_primitives_budget);
                             int biggest_viable_vertices_budget = subgroupMax(over_budget ? 0 : new_vertices_budget);
 
+                            ts_out.start[num_meshlets] = uint16_t(first);
                             ts_out.end[num_meshlets++] = uint16_t(scan_idx + furthest_not_over_budget + 1);
                             primitives_budget = 0;
                             vertices_budget = 0;
+
+                            first = int(scan_idx + furthest_not_over_budget + 1);
                         }
                     } else {
+                        bool has_faces = faces != 0;
+                        if (subgroupAny(has_faces)) {
+                            if (first == -1) {
+                                uint first_thread_with_faces = subgroupBallotFindLSB(subgroupBallot(has_faces));
+                                first = int(scan_idx + first_thread_with_faces);
+                            }
+                            uint last_thread_with_faces = subgroupBallotFindMSB(subgroupBallot(has_faces));
+                            last = int(scan_idx + last_thread_with_faces + 1);
+                        }
+
                         primitives_budget += subgroupAdd(primitives_count);
                         vertices_budget += subgroupAdd(vertices_count);
                         break;
@@ -307,7 +327,8 @@ void main() {
             }
 
             if (primitives_budget > 0) {
-                ts_out.end[num_meshlets++] = uint16_t(4096);
+                ts_out.start[num_meshlets] = uint16_t(first);
+                ts_out.end[num_meshlets++] = uint16_t(last);
             }
 
             //num_meshlets = 205;

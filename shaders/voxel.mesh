@@ -39,7 +39,8 @@ layout(scalar, push_constant) uniform T {
 struct Payload {
     ivec3 chunk_position;
     uint8_t faces[4096];
-    uint16_t end[205]; /* 96 */
+    uint16_t start[256]; /* 96 */
+    uint16_t end[256]; /* 96 */
 };
 
 taskPayloadSharedEXT Payload ts_in;
@@ -107,9 +108,7 @@ void main() {
     primitive_buffer_length = 0;
     barrier();
 
-    int start = 0;
-    if (gl_WorkGroupID.x > 0)
-        start = ts_in.end[gl_WorkGroupID.x - 1];
+    int start = ts_in.start[gl_WorkGroupID.x];
     int end = ts_in.end[gl_WorkGroupID.x];
 
     //start = 0;
