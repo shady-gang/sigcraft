@@ -55,11 +55,37 @@ perprimitiveEXT out vec3 normalOut[];
 #define CUNK_CHUNK_MAX_HEIGHT 384
 #define CUNK_CHUNK_SIZE 16
 
+uint encode_morton(uint x, uint y, uint z) {
+    uint acc = 0;
+    for (uint bit = 0; bit < 4; bit++) {
+        uint xb = (x >> bit) & 0x1u;
+        uint yb = (y >> bit) & 0x1u;
+        uint zb = (z >> bit) & 0x1u;
+        acc |= (zb << 2 | yb << 1 | xb << 0) << (3 * bit);
+    }
+    return acc;
+}
+
+void decode_morton(uint xyz, out uint x, out uint y, out uint z) {
+    x = 0;
+    y = 0;
+    z = 0;
+    for (uint bit = 0; bit < 4; bit++) {
+        uint xyzb = (xyz >> (3 * bit)) & 0x7;
+        uint xb = xyzb & 0x1;
+        uint yb = (xyzb >> 1) & 0x1;
+        uint zb = (xyzb >> 2) & 0x1;
+        x |= (xb << bit);
+        y |= (yb << bit);
+        z |= (zb << bit);
+    }
+}
+
 const uint lod_res[] = { 16, 8, 4, 2, 1 };
 const uint lod_offsets[] = { 0, 4096, 4608, 4672, 4680, 4681 };
 
 uint encode_chunkcoord(uint x, uint y, uint z, uint lod) {
-    return lod_offsets[lod] + x + (y + z * lod_res[lod]) * lod_res[lod];
+    return lod_offsets[lod] + encode_morton(x, y, z);
 }
 
 uint encode_chunkcoord(uvec3 v, uint lod) {
@@ -67,9 +93,7 @@ uint encode_chunkcoord(uvec3 v, uint lod) {
 }
 
 void decode_block_idx(uint idx, out uvec3 block_pos) {
-    block_pos.x = idx % 16;
-    block_pos.y = (idx / 16) % 16;
-    block_pos.z = idx / 256;
+    decode_morton(idx, block_pos.x, block_pos.y, block_pos.z);
 }
 
 vec3 lod2color(int lod) {

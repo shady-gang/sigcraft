@@ -4,6 +4,7 @@
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
@@ -59,15 +60,47 @@ void decode_neighboring_chunk_idx(int idx, out int dx, out int dy, out int dz) {
     dx = ((idx / 3) / 3) - 1;
 }
 
+uint encode_morton(uint x, uint y, uint z) {
+    uint acc = 0;
+    for (uint bit = 0; bit < 4; bit++) {
+        uint xb = (x >> bit) & 0x1u;
+        uint yb = (y >> bit) & 0x1u;
+        uint zb = (z >> bit) & 0x1u;
+        acc |= (zb << 2 | yb << 1 | xb << 0) << (3 * bit);
+    }
+    return acc;
+}
+
+void decode_morton(uint xyz, out uint x, out uint y, out uint z) {
+    x = 0;
+    y = 0;
+    z = 0;
+    for (uint bit = 0; bit < 4; bit++) {
+        uint xyzb = (xyz >> (3 * bit)) & 0x7;
+        uint xb = xyzb & 0x1;
+        uint yb = (xyzb >> 1) & 0x1;
+        uint zb = (xyzb >> 2) & 0x1;
+        x |= (xb << bit);
+        y |= (yb << bit);
+        z |= (zb << bit);
+    }
+}
+
 const uint lod_res[] = { 16, 8, 4, 2, 1 };
 const uint lod_offsets[] = { 0, 4096, 4608, 4672, 4680, 4681 };
 
 uint encode_chunkcoord(uint x, uint y, uint z, uint lod) {
-    return lod_offsets[lod] + x + (y + z * lod_res[lod]) * lod_res[lod];
+    return lod_offsets[lod] + encode_morton(x, y, z);
 }
 
 uint encode_chunkcoord(uvec3 v, uint lod) {
     return encode_chunkcoord(v.x, v.y, v.z, lod);
+}
+
+void decode_block_idx(int idx, out ivec3 block_pos) {
+    uvec3 ublock_pos;
+    decode_morton(idx, ublock_pos.x, ublock_pos.y, ublock_pos.z);
+    block_pos = ivec3(ublock_pos);
 }
 
 bool is_chunk_solid(VoxelDataRef chunk) {
@@ -135,12 +168,6 @@ uint safe_access(ivec3 v) {
 
 bool is_solid_block(ivec3 pos) {
     return safe_access(pos) != 0;
-}
-
-void decode_block_idx(int idx, out ivec3 block_pos) {
-    block_pos.x = idx % 16;
-    block_pos.y = (idx / 16) % 16;
-    block_pos.z = idx / 256;
 }
 
 uint8_t face_mask_to_vertex_mask(int faces) {

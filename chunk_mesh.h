@@ -36,7 +36,37 @@ struct ChunkMesh {
 constexpr static unsigned lod_res[] = { 16, 8, 4, 2, 1 };
 constexpr static unsigned lod_offsets[] = { 0, 4096, 4608, 4672, 4680, 4681 };
 
+inline uint encode_morton(uint x, uint y, uint z) {
+    uint acc = 0;
+    for (int bit = 0; bit < 4; bit++) {
+        uint xb = (x >> bit) & 0x1u;
+        uint yb = (y >> bit) & 0x1u;
+        uint zb = (z >> bit) & 0x1u;
+        acc |= ((zb << 2) | (yb << 1) | (xb << 0)) << (3 * bit);
+    }
+    return acc;
+}
+
+inline void decode_morton(uint xyz, uint& x, uint& y, uint& z) {
+    x = 0;
+    y = 0;
+    z = 0;
+    for (int bit = 0; bit < 4; bit++) {
+        uint xyzb = (xyz >> (3 * bit)) & 0x7;
+        uint xb = xyzb & 0x1;
+        uint yb = (xyzb >> 1) & 0x1;
+        uint zb = (xyzb >> 2) & 0x1;
+        x |= (xb << bit);
+        y |= (yb << bit);
+        z |= (zb << bit);
+    }
+}
+
 inline unsigned encode_chunkcoord(unsigned x, unsigned y, unsigned z, int lod) {
+    return lod_offsets[lod] + encode_morton(x, y, z);
+}
+
+/*inline unsigned encode_chunkcoord(unsigned x, unsigned y, unsigned z, int lod) {
     return lod_offsets[lod] + x + (y + z * lod_res[lod]) * lod_res[lod];
 }
 
@@ -47,7 +77,7 @@ inline std::tuple<unsigned, unsigned, unsigned> decode_chunkcoord(unsigned coord
     coord /= lod_res[lod];
     unsigned z = coord;
     return {x, y, z};
-}
+}*/
 
 struct ChunkVoxelData {
     std::unique_ptr<imr::Buffer> buf[CUNK_CHUNK_SECTIONS_COUNT];
