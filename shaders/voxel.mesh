@@ -8,10 +8,11 @@
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_arithmetic : require
 #extension GL_KHR_shader_subgroup_vote : require
+#extension GL_KHR_shader_subgroup_shuffle : require
 #extension GL_EXT_maximal_reconvergence : enable
 #extension GL_EXT_debug_printf : enable
 
-layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 
 layout(triangles, max_vertices = 256, max_primitives = 256) out;
 
@@ -95,8 +96,30 @@ vec3 heatmap(float lod) {
     return vec3(1.0, 0.0, 0.0);
 }
 
-int vertex_buffer_length;
-int primitive_buffer_length;
+shared int vertex_buffer_length;
+shared int primitive_buffer_length;
+
+int allocate_vertex_buffer_space(int size) {
+    int offset;
+    if (gl_SubgroupInvocationID == 0) {
+        offset = atomicAdd(vertex_buffer_length, size);
+    }
+    offset = subgroupShuffle(offset, 0);
+    if (offset >= 256)
+        return -1;
+    return offset;
+}
+
+int allocate_primitive_buffer_space(int size) {
+    int offset;
+    if (gl_SubgroupInvocationID == 0) {
+        offset = atomicAdd(primitive_buffer_length, size);
+    }
+    offset = subgroupShuffle(offset, 0);
+    if (offset >= 256)
+        return -1;
+    return offset;
+}
 
 void main() {
     SetMeshOutputsEXT(256, 256);
@@ -111,15 +134,18 @@ void main() {
     int start = ts_in.start[gl_WorkGroupID.x];
     int end = ts_in.end[gl_WorkGroupID.x];
 
-    //start = 0;
-    //end = 32;
-
     if (start >= end)
         return;
 
+    int num_subgroups = int(gl_WorkGroupSize.x) / 32;
+    int subgroup_slice = 4096 / num_subgroups;
+
+    //int scan_range_start = int(gl_SubgroupID.x * subgroup_slice + 0);
+    //int scan_range_end = int(gl_SubgroupID.x * subgroup_slice + subgroup_slice);
+
     //int window_length = end - start;
-    for (int scan_idx = start; scan_idx < end; scan_idx += 32) {
-        uint block_idx = scan_idx + gl_SubgroupInvocationID;
+    for (int scan_idx = start; scan_idx < end; scan_idx += int(gl_WorkGroupSize.x)) {
+        uint block_idx = scan_idx + gl_LocalInvocationIndex;
         if (block_idx < end && block_idx < 4096) {
             uvec3 block_pos;
             decode_block_idx(block_idx, block_pos);
@@ -129,21 +155,23 @@ void main() {
             uint faces = uint(ts_in.faces[block_idx]);
             uint num_vertices = faces == 0 ? 0 : 8;
             int num_faces = bitCount(faces) * 2;
-            uint base_vertex_id = vertex_buffer_length + subgroupExclusiveAdd(num_vertices);
-            uint primitive_idx = primitive_buffer_length + subgroupExclusiveAdd(num_faces);
 
             int new_vertices = subgroupAdd(int(num_vertices));
             int new_faces = subgroupAdd(num_faces);
-            int old_vertex_buffer_length = vertex_buffer_length;
-            vertex_buffer_length += new_vertices;
-            primitive_buffer_length += new_faces;
-            if (primitive_buffer_length > 256 || vertex_buffer_length > 256 || base_vertex_id + num_vertices > 256 || primitive_idx + num_faces > 256) {
+
+            int allocated_vertex_space = allocate_vertex_buffer_space(new_vertices);
+            int allocated_primitive_space = allocate_primitive_buffer_space(new_faces);
+
+            if (allocated_vertex_space < 0 || allocated_primitive_space < 0) {
             //    if (primitive_buffer_length <= 256 && vertex_buffer_length <= 256)
             //    debugPrintfEXT("CP [%d %d %d] tid: %d primitive_buffer_length: %d vertex_buffer_length: %d base_vertex_id: %d primitive_idx: %d new_vertices: %d new faces: %d old_vertex_buffer_length: %d num_vertices: %d num_faces: %d\n",
             //        ts_in.chunk_position.x, ts_in.chunk_position.y, ts_in.chunk_position.z, gl_SubgroupInvocationID,
             //        primitive_buffer_length, vertex_buffer_length, base_vertex_id, primitive_idx, new_vertices, new_faces, old_vertex_buffer_length, num_vertices, num_faces);
                 return;
             }
+
+            uint base_vertex_id = int(allocated_vertex_space + subgroupExclusiveAdd(num_vertices));
+            uint primitive_idx = int(allocated_primitive_space + subgroupExclusiveAdd(num_faces));
 
             if (num_vertices > 0) {
                 // v0 = (0,0,0)
