@@ -125,8 +125,8 @@ void main() {
     SetMeshOutputsEXT(256, 256);
 
     // always zero-out the output primitives array first
-    for (int i = 0; i < 8; i++)
-        gl_PrimitiveTriangleIndicesEXT[i * 32 + gl_SubgroupInvocationID] = uvec3(0,0,0);
+    for (int i = 0; i < 256 / gl_WorkGroupSize.x; i++)
+        gl_PrimitiveTriangleIndicesEXT[i * gl_WorkGroupSize.x + gl_LocalInvocationIndex] = uvec3(0,0,0);
     vertex_buffer_length = 0;
     primitive_buffer_length = 0;
     barrier();
@@ -136,12 +136,6 @@ void main() {
 
     if (start >= end)
         return;
-
-    int num_subgroups = int(gl_WorkGroupSize.x) / 32;
-    int subgroup_slice = 4096 / num_subgroups;
-
-    //int scan_range_start = int(gl_SubgroupID.x * subgroup_slice + 0);
-    //int scan_range_end = int(gl_SubgroupID.x * subgroup_slice + subgroup_slice);
 
     //int window_length = end - start;
     for (int scan_idx = start; scan_idx < end; scan_idx += int(gl_WorkGroupSize.x)) {

@@ -232,7 +232,7 @@ void main() {
             int primitives_budget = 0;
             int vertices_budget = 0;
 
-            int num_subgroups = int(gl_WorkGroupSize.x) / 32;
+            int num_subgroups = int(gl_WorkGroupSize.x / gl_SubgroupSize);
             int subgroup_slice = 4096 / num_subgroups;
 
             int scan_range_start = int(gl_SubgroupID.x * subgroup_slice + 0);
@@ -241,7 +241,7 @@ void main() {
             int first = scan_range_start;
             int last = -1;
 
-            for (int scan_idx = scan_range_start; scan_idx < scan_range_end; scan_idx += 32) {
+            for (int scan_idx = scan_range_start; scan_idx < scan_range_end; scan_idx += int(gl_SubgroupSize)) {
                 ivec3 block_pos;
                 decode_block_idx(scan_idx + int(gl_SubgroupInvocationID), block_pos);
 
@@ -271,13 +271,6 @@ void main() {
 
                 int primitives_count = bitCount(uint(faces)) * 2;
                 int vertices_count = approx_unique_cube_vertices(faces);
-
-                /*int a = subgroupAdd(primitives_count);
-                if (a > 0) {
-                    //ts_out.end[num_meshlets++] = uint16_t(min(4096, scan_idx + 0));
-                    //ts_out.end[num_meshlets++] = uint16_t(min(4096, scan_idx + 16));
-                    //ts_out.end[num_meshlets++] = uint16_t(min(4096, scan_idx + 32));
-                }*/
 
                 for (int i = 0; i < 4; i++) {
                     //if (num_meshlets > 100)
