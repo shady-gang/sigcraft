@@ -143,14 +143,39 @@ void decode_block_idx(int idx, out ivec3 block_pos) {
     block_pos.z = idx / 256;
 }
 
-// TODO: pre-compute a more exact approximation that considers neighboring faces and store that in a const array
+uint8_t face_mask_to_vertex_mask(int faces) {
+    int bit_0 = 0x1;
+    int bit_1 = 0x2;
+    int bit_2 = 0x4;
+    int bit_3 = 0x8;
+    int bit_4 = 0x10;
+    int bit_5 = 0x20;
+    int bit_6 = 0x40;
+    int bit_7 = 0x80;
+    int result = 0;
+    if ((faces & 0x1) != 0) {
+        result |= bit_4 | bit_5 | bit_6 | bit_7;
+    }
+    if ((faces & 0x2) != 0) {
+        result |= bit_0 | bit_1 | bit_2 | bit_3;
+    }
+    if ((faces & 0x4) != 0) {
+        result |= bit_1 | bit_3 | bit_5 | bit_7;
+    }
+    if ((faces & 0x8) != 0) {
+        result |= bit_0 | bit_2 | bit_4 | bit_6;
+    }
+    if ((faces & 0x10) != 0) {
+        result |= bit_2 | bit_3 | bit_6 | bit_7;
+    }
+    if ((faces & 0x20) != 0) {
+        result |= bit_0 | bit_1 | bit_4 | bit_5;
+    }
+    return uint8_t(result);
+}
+
 int approx_unique_cube_vertices(uint8_t faces_mask) {
-    int faces_count = bitCount(uint(faces_mask));
-    if (faces_count == 0)
-        return 0;
-    //if (faces_count == 1)
-    //    return 4;
-    return 8;
+    return bitCount(face_mask_to_vertex_mask(int(faces_mask)));
 }
 
 shared int meshlets_counter;
