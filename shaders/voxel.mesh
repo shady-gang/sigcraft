@@ -12,9 +12,12 @@
 #extension GL_EXT_maximal_reconvergence : enable
 #extension GL_EXT_debug_printf : enable
 
-layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 
-layout(triangles, max_vertices = 256, max_primitives = 256) out;
+#define MAX_VERTS 64
+#define MAX_PRIMS 126
+
+layout(triangles, max_vertices = MAX_VERTS, max_primitives = MAX_PRIMS) out;
 
 layout(scalar, buffer_reference) buffer VoxelDataRef {
   uint data[];
@@ -37,11 +40,17 @@ layout(scalar, push_constant) uniform T {
     VisibleChunksArrayRef visible_chunks;
 } push_constants;
 
+struct MeshletPayload {
+    uint16_t start;
+    uint16_t end;
+    uint8_t num_verts;
+    uint8_t num_prims;
+};
+
 struct Payload {
     ivec3 chunk_position;
     uint8_t faces[4096];
-    uint16_t start[256]; /* 96 */
-    uint16_t end[256]; /* 96 */
+    MeshletPayload meshlets[256];
 };
 
 taskPayloadSharedEXT Payload ts_in;
@@ -129,7 +138,7 @@ int allocate_vertex_buffer_space(int size) {
         offset = atomicAdd(vertex_buffer_length, size);
     }
     offset = subgroupShuffle(offset, 0);
-    if (offset >= 256)
+    if (offset + size > MAX_VERTS)
         return -1;
     return offset;
 }
@@ -140,7 +149,7 @@ int allocate_primitive_buffer_space(int size) {
         offset = atomicAdd(primitive_buffer_length, size);
     }
     offset = subgroupShuffle(offset, 0);
-    if (offset >= 256)
+    if (offset + size > MAX_PRIMS)
         return -1;
     return offset;
 }
@@ -188,17 +197,22 @@ const vec3 vertex_offsets[8] = {
 };
 
 void main() {
-    SetMeshOutputsEXT(256, 256);
+    MeshletPayload meshlet = ts_in.meshlets[gl_WorkGroupID.x];
+    SetMeshOutputsEXT(meshlet.num_verts, meshlet.num_prims);
 
     // always zero-out the output primitives array first
-    for (int i = 0; i < 256 / gl_WorkGroupSize.x; i++)
-        gl_PrimitiveTriangleIndicesEXT[i * gl_WorkGroupSize.x + gl_LocalInvocationIndex] = uvec3(0,0,0);
+    for (uint i = 0; i < meshlet.num_prims; i+= gl_WorkGroupSize.x) {
+        uint idx = i * gl_WorkGroupSize.x + gl_LocalInvocationIndex;
+        if (idx < meshlet.num_prims) {
+            gl_PrimitiveTriangleIndicesEXT[idx] = uvec3(0,0,0);
+        }
+    }
     vertex_buffer_length = 0;
     primitive_buffer_length = 0;
     barrier();
 
-    int start = ts_in.start[gl_WorkGroupID.x];
-    int end = ts_in.end[gl_WorkGroupID.x];
+    int start = meshlet.start;
+    int end = meshlet.end;
 
     if (start >= end)
         return;
