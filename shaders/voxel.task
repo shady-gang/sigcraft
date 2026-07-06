@@ -9,10 +9,11 @@
 #extension GL_KHR_shader_subgroup_arithmetic : require
 #extension GL_KHR_shader_subgroup_vote : require
 #extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_shuffle : require
 #extension GL_EXT_maximal_reconvergence : enable
 #extension GL_EXT_debug_printf : enable
 
-layout(local_size_x = 2, local_size_y = 16, local_size_z = 1) in;
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 
 layout(scalar, buffer_reference) buffer VoxelDataRef {
     uint data[];
@@ -45,8 +46,6 @@ struct Payload {
 };
 
 taskPayloadSharedEXT Payload ts_out;
-
-shared uint next_meshlet_starts_at;
 
 uint64_t neighboring_chunks_2[27];
 
@@ -154,6 +153,17 @@ int approx_unique_cube_vertices(uint8_t faces_mask) {
     return 8;
 }
 
+shared int meshlets_counter;
+
+int allocate_next_meshlet_idx() {
+    int idx;
+    if (gl_SubgroupInvocationID == 0) {
+        idx = atomicAdd(meshlets_counter, 1);
+    }
+    idx = subgroupShuffle(idx, 0);
+    return idx;
+}
+
 void main() {
 
     // gl_WorkGroupID
@@ -213,7 +223,7 @@ void main() {
 #endif
 
         if (occluded_direct_neighbors < 7 || push_constants.debug == 4) {
-            next_meshlet_starts_at = 0;
+            meshlets_counter = 0;
             barrier();
 
             ts_out.chunk_position = chunk_position;
@@ -222,12 +232,16 @@ void main() {
             int primitives_budget = 0;
             int vertices_budget = 0;
 
-            int num_meshlets = 0;
+            int num_subgroups = int(gl_WorkGroupSize.x) / 32;
+            int subgroup_slice = 4096 / num_subgroups;
 
-            int first = 0;
+            int scan_range_start = int(gl_SubgroupID.x * subgroup_slice + 0);
+            int scan_range_end = int(gl_SubgroupID.x * subgroup_slice + subgroup_slice);
+
+            int first = scan_range_start;
             int last = -1;
 
-            for (int scan_idx = 0; scan_idx < 4096; scan_idx += 32) {
+            for (int scan_idx = scan_range_start; scan_idx < scan_range_end; scan_idx += 32) {
                 ivec3 block_pos;
                 decode_block_idx(scan_idx + int(gl_SubgroupInvocationID), block_pos);
 
@@ -266,8 +280,8 @@ void main() {
                 }*/
 
                 for (int i = 0; i < 4; i++) {
-                    if (num_meshlets > 100)
-                        break;
+                    //if (num_meshlets > 100)
+                    //    break;
 
                     int new_primitives_budget = primitives_budget + subgroupInclusiveAdd(primitives_count);
                     int new_vertices_budget = vertices_budget + subgroupInclusiveAdd(vertices_count);
@@ -281,8 +295,9 @@ void main() {
                             //if (subgroupElect())
                             //    debugPrintfEXT("meshlet %d %d has %d, %d vtx/prims in it\n", num_meshlets, scan_idx, vertices_budget, primitives_budget);
 
-                            ts_out.start[num_meshlets] = uint16_t(first);
-                            ts_out.end[num_meshlets++] = uint16_t(scan_idx);
+                            int meshlet_idx = allocate_next_meshlet_idx();
+                            ts_out.start[meshlet_idx] = uint16_t(first);
+                            ts_out.end[meshlet_idx] = uint16_t(scan_idx);
                             primitives_budget = 0;
                             vertices_budget = 0;
 
@@ -301,8 +316,9 @@ void main() {
                             int biggest_viable_primitive_budget = subgroupMax(over_budget ? 0 : new_primitives_budget);
                             int biggest_viable_vertices_budget = subgroupMax(over_budget ? 0 : new_vertices_budget);
 
-                            ts_out.start[num_meshlets] = uint16_t(first);
-                            ts_out.end[num_meshlets++] = uint16_t(scan_idx + furthest_not_over_budget + 1);
+                            int meshlet_idx = allocate_next_meshlet_idx();
+                            ts_out.start[meshlet_idx] = uint16_t(first);
+                            ts_out.end[meshlet_idx] = uint16_t(scan_idx + furthest_not_over_budget + 1);
                             primitives_budget = 0;
                             vertices_budget = 0;
 
@@ -327,23 +343,17 @@ void main() {
             }
 
             if (primitives_budget > 0) {
-                ts_out.start[num_meshlets] = uint16_t(first);
-                ts_out.end[num_meshlets++] = uint16_t(last);
+                int meshlet_idx = allocate_next_meshlet_idx();
+                ts_out.start[meshlet_idx] = uint16_t(first);
+                ts_out.end[meshlet_idx] = uint16_t(last);
             }
 
-            //num_meshlets = 205;
-            //for (int meshlet = 0; meshlet < num_meshlets; meshlet++) {
-            //    ts_out.end[meshlet] = uint16_t(20 + meshlet * 20);
-            //}
-//
-            //num_meshlets = 1;
-            //ts_out.end[0] = uint16_t(4096);
-
-            EmitMeshTasksEXT(num_meshlets, 1, 1);
+            barrier();
+            EmitMeshTasksEXT(meshlets_counter, 1, 1);
             return;
         }
     } else {
-    // emit NOTHING
-    EmitMeshTasksEXT(0, 0, 0);
+        // emit NOTHING
+        EmitMeshTasksEXT(0, 0, 0);
     }
 }
