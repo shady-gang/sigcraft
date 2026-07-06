@@ -385,7 +385,7 @@ int main(int argc, char** argv) {
                 push_constants.visible_chunks_array = visible_chunks_array_gpu->device_address();
                 vkCmdPushConstants(cmdbuf, pipeline->layout(), VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(push_constants), &push_constants);
 
-                device.dispatch.cmdDrawMeshTasksEXT(cmdbuf, visible_chunks_array_size, CUNK_CHUNK_SECTIONS_COUNT, visible_chunks_array_size);
+                device.dispatch.cmdDrawMeshTasksEXT(cmdbuf, visible_chunks_array_size * 4, CUNK_CHUNK_SECTIONS_COUNT * 4, visible_chunks_array_size * 4);
 
                 context.frame().addCleanupAction([=, visible_chunks_array_gpu = visible_chunks_array_gpu]() {
 
