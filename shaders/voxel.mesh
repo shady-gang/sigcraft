@@ -12,7 +12,7 @@
 #extension GL_EXT_maximal_reconvergence : enable
 #extension GL_EXT_debug_printf : enable
 
-layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 layout(triangles, max_vertices = 256, max_primitives = 256) out;
 
@@ -144,7 +144,7 @@ void main() {
             uvec3 block_pos;
             decode_block_idx(block_idx, block_pos);
 
-            vec3 color = vec3(fract(gl_WorkGroupID.x * 0.5231), fract(gl_WorkGroupID.x * 0.252102), fract(gl_WorkGroupID.x * 0.333));
+            vec3 color = vec3(fract(16 * ts_in.chunk_position.x * 7.777 + start * 0.5231), fract(16 * ts_in.chunk_position.y * 7.777 + start * 0.252102), fract(16 * ts_in.chunk_position.z * 7.777 + start * 0.333));
 
             uint faces = uint(ts_in.faces[block_idx]);
             uint num_vertices = faces == 0 ? 0 : 8;
