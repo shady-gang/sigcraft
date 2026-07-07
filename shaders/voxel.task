@@ -16,8 +16,8 @@
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
-layout(scalar, buffer_reference) buffer VoxelDataRef {
-    uint data[];
+layout(scalar, buffer_reference) readonly buffer VoxelDataRef {
+    uint8_t data[];
 };
 
 struct ChunkSections {
@@ -119,7 +119,7 @@ uint lod_access(VoxelDataRef chunk, uvec3 pos) {
         return 0;
 
     for (int lod = push_constants.debug == 3 ? 4 : 0; lod >= 0; lod--) {
-        uvec3 lod_pos = pos / lod_res[4-lod];
+        uvec3 lod_pos = pos >> lod;
         uint data = chunk.data[encode_chunkcoord(lod_pos, lod)];
         if (lod == 0) {
             return data;

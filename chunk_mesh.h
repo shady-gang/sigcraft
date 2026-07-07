@@ -84,7 +84,7 @@ struct ChunkVoxelData {
 
     ChunkVoxelData(imr::Device&, std::shared_ptr<Chunk>);
 
-    constexpr static size_t buffer_size = lod_offsets[5] * sizeof(int);
+    constexpr static size_t buffer_size = lod_offsets[5] * sizeof(uint8_t);
 };
 
 #endif

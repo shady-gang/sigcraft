@@ -248,7 +248,7 @@ ChunkMesh::ChunkMesh(imr::Device& d, ChunkNeighbors& n) {
 }
 
 ChunkVoxelData::ChunkVoxelData(imr::Device& d, std::shared_ptr<Chunk> c) {
-    unsigned buffer[lod_offsets[5]];
+    uint8_t buffer[lod_offsets[5]];
     for (int section = 0; section < CUNK_CHUNK_SECTIONS_COUNT; section++) {
         int baseY = section * CUNK_CHUNK_SIZE;
         bool empty = true;
