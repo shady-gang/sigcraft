@@ -193,14 +193,15 @@ ChunkMesh::Face encode_face(vec3 color, BlockFace face) {
 }
 
 template<typename T>
-void upload(imr::Device& d, std::unique_ptr<imr::Buffer>& dst, const std::vector<T>& src) {
+void upload(imr::Device& d, std::unique_ptr<imr::Buffer>& dst, const std::vector<T>& src, VkBufferUsageFlags flags) {
     size_t buffer_size = src.size() * sizeof(T);
-    dst = std::make_unique<imr::Buffer>(d, buffer_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    dst = std::make_unique<imr::Buffer>(d, buffer_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | flags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     dst->uploadDataSync(0, buffer_size, (void*) src.data());
 }
 
 ChunkMesh::ChunkMesh(imr::Device& d, ChunkNeighbors& n) {
-    std::vector<Vertex> vertex_data;
+    std::vector<uint32_t> idx_data;
+    // std::vector<Vertex> vertex_data;
     std::vector<Face> face_data;
 
     ChunkNeighborsUnsafe unsafe {};
@@ -213,7 +214,10 @@ ChunkMesh::ChunkMesh(imr::Device& d, ChunkNeighbors& n) {
     num_verts = 0;
     std::function<add_face_fn_t> add_face = [&](ivec3 block_position, vec3 color, BlockFace face) {
         std::function<add_vertex_fn_t> add_vertex = [&](ivec3 position, vec2 uv){
-            vertex_data.push_back(encode_vertex(block_position + position, uv, face2normal(face), color));
+            //vertex_data.push_back(encode_vertex(block_position + position, uv, face2normal(face), color));
+            ivec3 p = block_position + position;
+            assert(p.x >= 0);
+            idx_data.push_back((p.x) | (p.z << 5) | (p.y << 10));
             num_verts += 1;
         };
         generate_face_vertices[(int)face](add_vertex);
@@ -226,8 +230,9 @@ ChunkMesh::ChunkMesh(imr::Device& d, ChunkNeighbors& n) {
     //fflush(stderr);
 
     if (num_verts > 0) {
-        upload(d, vertices, vertex_data);
-        upload(d, faces, face_data);
+        // upload(d, vertices, vertex_data, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        upload(d, indices, idx_data, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+        upload(d, faces, face_data, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     }
 }
 

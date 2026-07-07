@@ -5,8 +5,8 @@
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
-layout(location = 0)
-in ivec3 vertexIn;
+// layout(location = 0)
+// in ivec3 vertexIn;
 
 // layout(location = 1)
 // in vec3 normalIn;
@@ -29,7 +29,9 @@ layout(scalar, push_constant) uniform T {
 
 void main() {
     mat4 matrix = push_constants.matrix;
-    gl_Position = matrix * vec4(vec3(vertexIn + push_constants.chunk_position * 16), 1.0);
+    uint vertex_idx = uint(gl_VertexIndex);
+    uvec3 vertex = uvec3(vertex_idx & 0x1Fu, (vertex_idx >> 10), (vertex_idx >> 5) & 0x1Fu);
+    gl_Position = matrix * vec4(vec3(ivec3(vertex) + push_constants.chunk_position * 16), 1.0);
     // int primid = gl_VertexIndex / 6;
     // color = colorIn;
     // normal = normalIn;

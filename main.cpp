@@ -47,7 +47,7 @@ void camera_update(GLFWwindow*, CameraInput* input);
 
 bool reload_shaders = false;
 bool wireframe = false;
-bool mesh_shader = true;
+bool mesh_shader = false;
 
 struct Shaders {
     std::vector<std::string> files;
@@ -436,10 +436,11 @@ int main(int argc, char** argv) {
                         vs_push_constants.camera_chunk_pos = { chunk->cx, 0, chunk->cz };
                         vs_push_constants.face_data = mesh->faces->device_address();
                         vkCmdPushConstants(cmdbuf, pipeline->layout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(vs_push_constants), &vs_push_constants);
-                        VkBuffer vb = mesh->vertices->handle;
-                        VkDeviceSize offset = 0;
-                        vkCmdBindVertexBuffers(cmdbuf, 0, 1, &vb, &offset);
-                        device.dispatch.cmdDraw(cmdbuf, mesh->num_verts, 1, 0, 0);
+                        vkCmdBindIndexBuffer(cmdbuf, mesh->indices->handle, 0, VK_INDEX_TYPE_UINT32);
+                        //VkBuffer vb = mesh->vertices->handle;
+                        //VkDeviceSize offset = 0;
+                        //vkCmdBindVertexBuffers(cmdbuf, 0, 1, &vb, &offset);
+                        device.dispatch.cmdDrawIndexed(cmdbuf, mesh->num_verts, 1, 0, 0, 0);
 
                         context.frame().addCleanupAction([=, mesh = mesh]() {
 
