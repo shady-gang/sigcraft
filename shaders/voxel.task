@@ -28,6 +28,29 @@ layout(scalar, buffer_reference) buffer VisibleChunksArrayRef {
     ChunkSections visible[];
 };
 
+// sizeof = 64
+struct SubChunkTmp {
+    uint8_t faces[64];
+};
+
+layout(scalar, buffer_reference) buffer SubChunkTmpRef {
+    SubChunkTmp ref;
+};
+
+// sizeof = 4096
+struct ChunkTmpSection {
+    SubChunkTmp subchunks[64];
+};
+
+// sizeof = 98304
+struct ChunkTmpSections {
+    ChunkTmpSection sections[24];
+};
+
+layout(scalar, buffer_reference) buffer ChunkTmpRef {
+    ChunkTmpSections visible[];
+};
+
 #define CUNK_CHUNK_SIZE 16
 
 layout(scalar, push_constant) uniform T {
@@ -37,6 +60,7 @@ layout(scalar, push_constant) uniform T {
     int debug;
     int visible_chunk_radius;
     VisibleChunksArrayRef visible_chunks;
+    ChunkTmpRef tmp;
 } push_constants;
 
 struct MeshletPayload {
@@ -48,12 +72,11 @@ struct MeshletPayload {
 
 struct Payload {
     ivec3 chunk_position;
-    uint8_t faces[64];
+    uint64_t tmp;
     MeshletPayload meshlets[4];
 };
 
 taskPayloadSharedEXT Payload ts_out;
-
 uint64_t neighboring_chunks_2[27];
 
 int encode_neighboring_chunk_idx(int dx, int dy, int dz) {
@@ -291,6 +314,8 @@ void main() {
             barrier();
 
             ts_out.chunk_position = chunk_position * 16;// + ivec3(sub_chunk * 4);
+            ts_out.tmp = uint64_t(push_constants.tmp) + 98304 * visible_chunks_array_idx + 4096 * section + 64 * encode_morton(sub_chunk.x, sub_chunk.y, sub_chunk.z);
+            SubChunkTmpRef tmp = SubChunkTmpRef(ts_out.tmp);
 
             // subgroup-coherent
             int primitives_budget = 0;
@@ -333,7 +358,7 @@ void main() {
                     }
                 }
 
-                ts_out.faces[encode_chunkcoord(uvec3(block_pos % 4), 0) % 64] = faces;
+                tmp.ref.faces[encode_chunkcoord(uvec3(block_pos % 4), 0) % 64] = faces;
 
                 int primitives_count = bitCount(uint(faces)) * 2;
                 int vertices_count = approx_unique_cube_vertices(faces);

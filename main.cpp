@@ -20,6 +20,7 @@ struct {
     int debug;
     int visible_chunks_radius;
     uint64_t visible_chunks_array;
+    uint64_t scratch_buffer;
 } push_constants;
 
 Camera camera = {
@@ -180,6 +181,8 @@ int main(int argc, char** argv) {
     camera = {{0, 0, 3}, {0, 0}, 60};
 
     std::unique_ptr<imr::Image> depthBuffer;
+
+    std::shared_ptr<imr::Buffer> scratchBuffer;
 
     auto shaders = std::make_unique<Shaders>(device, swapchain);
 
@@ -383,6 +386,18 @@ int main(int argc, char** argv) {
                 push_constants.camera_chunk_pos = { player_chunk_x, 0 /* the visible chunks array is always offset at Y=0 player_chunk_y*/, player_chunk_z };
                 push_constants.visible_chunks_radius = radius;
                 push_constants.visible_chunks_array = visible_chunks_array_gpu->device_address();
+
+                size_t required_scratch_buffer_size = 98304 * visible_chunks_array_size * visible_chunks_array_size;
+                if (!scratchBuffer || scratchBuffer->size != required_scratch_buffer_size) {
+                    if (scratchBuffer) {
+                        // hold onto it till the frame is done
+                        context.frame().addCleanupAction([=, scratchBuffer = scratchBuffer]() {});
+                        scratchBuffer = nullptr;
+                    }
+                    scratchBuffer = std::make_shared<imr::Buffer>(device, required_scratch_buffer_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+                }
+                push_constants.scratch_buffer = scratchBuffer->device_address();
+
                 vkCmdPushConstants(cmdbuf, pipeline->layout(), VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(push_constants), &push_constants);
 
                 device.dispatch.cmdDrawMeshTasksEXT(cmdbuf, visible_chunks_array_size * 4, CUNK_CHUNK_SECTIONS_COUNT * 4, visible_chunks_array_size * 4);

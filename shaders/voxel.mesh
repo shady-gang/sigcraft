@@ -31,6 +31,29 @@ layout(scalar, buffer_reference) buffer VisibleChunksArrayRef {
     ChunkSections visible[];
 };
 
+// sizeof = 64
+struct SubChunkTmp {
+    uint8_t faces[64];
+};
+
+layout(scalar, buffer_reference) buffer SubChunkTmpRef {
+    SubChunkTmp ref;
+};
+
+// sizeof = 4096
+struct ChunkTmpSection {
+    SubChunkTmp subchunks[64];
+};
+
+// sizeof = 98304
+struct ChunkTmpSections {
+    ChunkTmpSection sections[24];
+};
+
+layout(scalar, buffer_reference) readonly buffer ChunkTmpRef {
+    ChunkTmpSections visible[];
+};
+
 layout(scalar, push_constant) uniform T {
     mat4 matrix;
     float time;
@@ -38,6 +61,7 @@ layout(scalar, push_constant) uniform T {
     int debug;
     int visible_chunk_radius;
     VisibleChunksArrayRef visible_chunks;
+    ChunkTmpRef tmp;
 } push_constants;
 
 struct MeshletPayload {
@@ -49,7 +73,7 @@ struct MeshletPayload {
 
 struct Payload {
     ivec3 chunk_position;
-    uint8_t faces[64];
+    uint64_t tmp;
     // with 4x4x4 subchunks, at most 32 blocks so 256 vertices and 384 faces, so 4 meshlets then ?
     MeshletPayload meshlets[4];
 };
@@ -227,7 +251,7 @@ void main() {
 
             vec3 color = vec3(fract(ts_in.chunk_position.x * 7.777 + start * 0.5231), fract(ts_in.chunk_position.y * 7.777 + start * 0.252102), fract(ts_in.chunk_position.z * 7.777 + start * 0.333));
 
-            uint faces = uint(ts_in.faces[encode_chunkcoord(block_pos % 4, 0) % 64]);
+            uint faces = uint(SubChunkTmpRef(ts_in.tmp).ref.faces[encode_chunkcoord(block_pos % 4, 0) % 64]);
             uint vertices = uint(face_mask_to_vertex_mask(int(faces)));
             uint num_vertices = bitCount(vertices);
             int num_faces = bitCount(faces) * 2;
