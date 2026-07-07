@@ -30,3 +30,6 @@ add_custom_target(voxel_mesh_spv COMMAND ${GLSLANG_EXE} -g -gV -V -S mesh ${CMAK
 add_dependencies(sigcraft voxel_mesh_spv)
 add_custom_target(voxel_task_spv COMMAND ${GLSLANG_EXE} -g -gV -V -S task ${CMAKE_CURRENT_SOURCE_DIR}/shaders/voxel.task -o ${CMAKE_CURRENT_BINARY_DIR}/voxel.task.spv --target-env spirv1.6 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/limits.conf)
 add_dependencies(sigcraft voxel_task_spv)
+
+add_custom_target(voxel_comp_spv COMMAND ${GLSLANG_EXE} -g -gV -V -S comp ${CMAKE_CURRENT_SOURCE_DIR}/shaders/voxel.comp -o ${CMAKE_CURRENT_BINARY_DIR}/voxel.comp.spv --target-env spirv1.6 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/limits.conf)
+add_dependencies(sigcraft voxel_comp_spv)

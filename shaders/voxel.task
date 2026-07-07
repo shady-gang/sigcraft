@@ -28,26 +28,31 @@ layout(scalar, buffer_reference) buffer VisibleChunksArrayRef {
     ChunkSections visible[];
 };
 
-// sizeof = 64
-struct SubChunkTmp {
-    uint8_t faces[64];
+// sizeof = 6
+struct MeshletPayload {
+    uint16_t start;
+    uint16_t end;
+    uint16_t num_verts;
+    uint16_t num_prims;
 };
 
-layout(scalar, buffer_reference) buffer SubChunkTmpRef {
-    SubChunkTmp ref;
-};
-
-// sizeof = 4096
-struct ChunkTmpSection {
-    SubChunkTmp subchunks[64];
-};
-
-// sizeof = 98304
-struct ChunkTmpSections {
-    ChunkTmpSection sections[24];
+// sizeof = 5636
+struct ChunkTmp {
+    uint8_t faces[4096];
+    uint num_meshlets;
+    MeshletPayload meshlets[256];
 };
 
 layout(scalar, buffer_reference) buffer ChunkTmpRef {
+    ChunkTmp ref;
+};
+
+// sizeof = 135264
+struct ChunkTmpSections {
+    ChunkTmp sections[24];
+};
+
+layout(scalar, buffer_reference) buffer TmpRef {
     ChunkTmpSections visible[];
 };
 
@@ -60,24 +65,15 @@ layout(scalar, push_constant) uniform T {
     int debug;
     int visible_chunk_radius;
     VisibleChunksArrayRef visible_chunks;
-    ChunkTmpRef tmp;
+    TmpRef tmp;
 } push_constants;
-
-struct MeshletPayload {
-    uint16_t start;
-    uint16_t end;
-    uint8_t num_verts;
-    uint8_t num_prims;
-};
 
 struct Payload {
     ivec3 chunk_position;
     uint64_t tmp;
-    MeshletPayload meshlets[4];
 };
 
 taskPayloadSharedEXT Payload ts_out;
-uint64_t neighboring_chunks_2[27];
 
 int encode_neighboring_chunk_idx(int dx, int dy, int dz) {
     return ((dx + 1) * 3 + (dy + 1)) * 3 + (dz + 1);
@@ -89,165 +85,8 @@ void decode_neighboring_chunk_idx(int idx, out int dx, out int dy, out int dz) {
     dx = ((idx / 3) / 3) - 1;
 }
 
-uint encode_morton(uint x, uint y, uint z) {
-    uint acc = 0;
-    for (uint bit = 0; bit < 4; bit++) {
-        uint xb = (x >> bit) & 0x1u;
-        uint yb = (y >> bit) & 0x1u;
-        uint zb = (z >> bit) & 0x1u;
-        acc |= (zb << 2 | yb << 1 | xb << 0) << (3 * bit);
-    }
-    return acc;
-}
-
-void decode_morton(uint xyz, out uint x, out uint y, out uint z) {
-    x = 0;
-    y = 0;
-    z = 0;
-    for (uint bit = 0; bit < 4; bit++) {
-        uint xyzb = (xyz >> (3 * bit)) & 0x7;
-        uint xb = xyzb & 0x1;
-        uint yb = (xyzb >> 1) & 0x1;
-        uint zb = (xyzb >> 2) & 0x1;
-        x |= (xb << bit);
-        y |= (yb << bit);
-        z |= (zb << bit);
-    }
-}
-
-const uint lod_res[] = { 16, 8, 4, 2, 1 };
-const uint lod_offsets[] = { 0, 4096, 4608, 4672, 4680, 4681 };
-
-uint encode_chunkcoord(uint x, uint y, uint z, uint lod) {
-    return lod_offsets[lod] + encode_morton(x, y, z);
-}
-
-uint encode_chunkcoord(uvec3 v, uint lod) {
-    return encode_chunkcoord(v.x, v.y, v.z, lod);
-}
-
-void decode_block_idx(int idx, out ivec3 block_pos) {
-    uvec3 ublock_pos;
-    decode_morton(idx, ublock_pos.x, ublock_pos.y, ublock_pos.z);
-    block_pos = ivec3(ublock_pos);
-}
-
-bool is_chunk_solid(VoxelDataRef chunk) {
-    uint data = chunk.data[encode_chunkcoord(uvec3(0), 4)];
-    return data == 2;
-}
-
-uint lod_access(VoxelDataRef chunk, uvec3 pos) {
-    if (uint64_t(chunk) == 0)
-        return 0;
-
-    for (int lod = push_constants.debug == 3 ? 4 : 0; lod >= 0; lod--) {
-        uvec3 lod_pos = pos >> lod;
-        uint data = chunk.data[encode_chunkcoord(lod_pos, lod)];
-        if (lod == 0) {
-            return data;
-        }
-        if (data == 0)
-            return 0;
-        // completely filled
-        if (data == 2)
-            return 2;
-    }
-    // unreachable
-    return 0;
-}
-
-uint safe_access(int x, int y, int z) {
-    int ox = 0, oy = 0, oz = 0;
-    if (x >= 16) {
-        ox = 1;
-        x -= 16;
-    }
-    if (y >= 16) {
-        oy = 1;
-        y -= 16;
-    }
-    if (z >= 16) {
-        oz = 1;
-        z -= 16;
-    }
-    if (x < 0) {
-        ox = -1;
-        x += 16;
-    }
-    if (y < 0) {
-        oy = -1;
-        y += 16;
-    }
-    if (z < 0) {
-        oz = -1;
-        z += 16;
-    }
-
-    if (x >= 0 && x < CUNK_CHUNK_SIZE && y >= 0 && y < CUNK_CHUNK_SIZE && z >= 0 && z < CUNK_CHUNK_SIZE) {
-        VoxelDataRef voxel_data = VoxelDataRef(neighboring_chunks_2[encode_neighboring_chunk_idx(ox, oy, oz)]);
-        return lod_access(voxel_data, uvec3(x, y, z));
-    }
-    return 0;
-}
-
-uint safe_access(ivec3 v) {
-    return safe_access(v.x, v.y, v.z);
-}
-
-bool is_solid_block(ivec3 pos) {
-    return safe_access(pos) != 0;
-}
-
-uint8_t face_mask_to_vertex_mask(int faces) {
-    int bit_0 = 0x1;
-    int bit_1 = 0x2;
-    int bit_2 = 0x4;
-    int bit_3 = 0x8;
-    int bit_4 = 0x10;
-    int bit_5 = 0x20;
-    int bit_6 = 0x40;
-    int bit_7 = 0x80;
-    int result = 0;
-    if ((faces & 0x1) != 0) {
-        result |= bit_4 | bit_5 | bit_6 | bit_7;
-    }
-    if ((faces & 0x2) != 0) {
-        result |= bit_0 | bit_1 | bit_2 | bit_3;
-    }
-    if ((faces & 0x4) != 0) {
-        result |= bit_1 | bit_3 | bit_5 | bit_7;
-    }
-    if ((faces & 0x8) != 0) {
-        result |= bit_0 | bit_2 | bit_4 | bit_6;
-    }
-    if ((faces & 0x10) != 0) {
-        result |= bit_2 | bit_3 | bit_6 | bit_7;
-    }
-    if ((faces & 0x20) != 0) {
-        result |= bit_0 | bit_1 | bit_4 | bit_5;
-    }
-    return uint8_t(result);
-}
-
-int approx_unique_cube_vertices(uint8_t faces_mask) {
-    return bitCount(face_mask_to_vertex_mask(int(faces_mask)));
-}
-
-shared int meshlets_counter;
-
-int allocate_next_meshlet_idx() {
-    int idx;
-    if (gl_SubgroupInvocationID == 0) {
-        idx = atomicAdd(meshlets_counter, 1);
-    }
-    idx = subgroupShuffle(idx, 0);
-    return idx;
-}
-
 void main() {
-    uvec3 relative_chunk_id = gl_WorkGroupID / 4;
-    uvec3 sub_chunk = gl_WorkGroupID % 4;
+    uvec3 relative_chunk_id = gl_WorkGroupID;
 
     int visible_chunks_array_size = push_constants.visible_chunk_radius * 2 + 1;
     uint visible_chunks_array_idx = relative_chunk_id.x * visible_chunks_array_size + relative_chunk_id.z;
@@ -259,181 +98,12 @@ void main() {
 
     int section = int(relative_chunk_id.y);
 
-    VoxelDataRef ptr = push_constants.visible_chunks.visible[visible_chunks_array_idx].sections[section];
-    int occluded_direct_neighbors = 0;
-    if (uint64_t(ptr) != 0) {
-        if (ptr.data[encode_chunkcoord(uvec3(0), 4)] == 0 || ptr.data[encode_chunkcoord(sub_chunk, 2)] == 0) {
-            EmitMeshTasksEXT(0, 0, 0);
-            return;
-        }
+    ChunkTmpRef tmp = ChunkTmpRef(uint64_t(push_constants.tmp) + 135264 * visible_chunks_array_idx + 5636 * section);
 
-#define PARALLEL_NEIGHBORS_GATHER 0
-#if PARALLEL_NEIGHBORS_GATHER
-        int idx = int(gl_SubgroupInvocationID);
-        if (idx < 27) {
-            int dx, dy, dz;
-            decode_neighboring_chunk_idx(idx, dx, dy, dz);
-#else
-        for (int dx = -1; dx <= 1; dx++)
-        for (int dy = -1; dy <= 1; dy++)
-        for (int dz = -1; dz <= 1; dz++) {
-            int idx = encode_neighboring_chunk_idx(dx, dy, dz);
-#endif
-            ivec3 neighboring_chunk_position = chunk_position + ivec3(dx, dy, dz);
-            if (neighboring_chunk_position.y < 0 || neighboring_chunk_position.y >= 24) {
-                neighboring_chunks_2[idx] = 0;
-            } else {
-                ivec3 delta = neighboring_chunk_position - push_constants.camera_chunk_pos;
-                if (abs(delta.x) > push_constants.visible_chunk_radius || abs(delta.z) > push_constants.visible_chunk_radius) {
-                    neighboring_chunks_2[idx] = 0;
-                } else {
-                    uint visible_chunks_array_neighbor_x = delta.x + push_constants.visible_chunk_radius;
-                    uint visible_chunks_array_neighbor_z = delta.z + push_constants.visible_chunk_radius;
-                    uint visible_chunks_array_neighbor_idx = visible_chunks_array_neighbor_x * visible_chunks_array_size + visible_chunks_array_neighbor_z;
+    ts_out.chunk_position = chunk_position * 16;
+    ts_out.tmp = uint64_t(tmp);
 
-                    VoxelDataRef chunk = push_constants.visible_chunks.visible[visible_chunks_array_neighbor_idx].sections[chunk_position.y + dy];
-                    neighboring_chunks_2[idx] = uint64_t(chunk);
+    // debugPrintfEXT("%d %d %d meshlets %d\n", chunk_position.x, chunk_position.y, chunk_position.z, tmp.ref.num_meshlets);
+    EmitMeshTasksEXT(tmp.ref.num_meshlets, 1, 1);
 
-                    bool is_direct_neighbor = abs(dx) + abs(dy) + abs(dz) <= 1;
-                    if (is_direct_neighbor) {
-                        if (uint64_t(chunk) != 0 && is_chunk_solid(chunk))
-                            occluded_direct_neighbors += 1;
-                    }
-               }
-            }
-        }
-
-        //ts_out.neighboring_chunks[encode_neighboring_chunk_idx(0,0,0)] = uint64_t(ptr);
-
-#if PARALLEL_NEIGHBORS_GATHER
-        occluded_direct_neighbors = subgroupAdd(occluded_direct_neighbors);
-#endif
-
-        if (occluded_direct_neighbors < 7 || push_constants.debug == 4) {
-            meshlets_counter = 0;
-            barrier();
-
-            ts_out.chunk_position = chunk_position * 16;// + ivec3(sub_chunk * 4);
-            ts_out.tmp = uint64_t(push_constants.tmp) + 98304 * visible_chunks_array_idx + 4096 * section + 64 * encode_morton(sub_chunk.x, sub_chunk.y, sub_chunk.z);
-            SubChunkTmpRef tmp = SubChunkTmpRef(ts_out.tmp);
-
-            // subgroup-coherent
-            int primitives_budget = 0;
-            int vertices_budget = 0;
-
-            int num_subgroups = int(gl_WorkGroupSize.x / gl_SubgroupSize);
-            int subgroup_slice = 64 / num_subgroups;
-
-            int subchunk_offset = int(64 * encode_morton(sub_chunk.x, sub_chunk.y, sub_chunk.z));
-
-            int scan_range_start = subchunk_offset + int(gl_SubgroupID.x * subgroup_slice + 0);
-            int scan_range_end = subchunk_offset + int(gl_SubgroupID.x * subgroup_slice + subgroup_slice);
-
-            int first = scan_range_start;
-            int last = -1;
-
-            for (int scan_idx = scan_range_start; scan_idx < scan_range_end; scan_idx += int(gl_SubgroupSize)) {
-                ivec3 block_pos;
-                decode_block_idx(scan_idx + int(gl_SubgroupInvocationID), block_pos);
-
-                uint8_t faces = uint8_t(0);
-                if (is_solid_block(block_pos)) {
-                    if (!is_solid_block(block_pos + ivec3(0,1,0))) {
-                        faces |= uint8_t(0x1);
-                    }
-                    if (!is_solid_block(block_pos + ivec3(0,-1,0))) {
-                        faces |= uint8_t(0x2);
-                    }
-                    if (!is_solid_block(block_pos + ivec3(0,0,1))) {
-                        faces |= uint8_t(0x4);
-                    }
-                    if (!is_solid_block(block_pos + ivec3(0,0,-1))) {
-                        faces |= uint8_t(0x8);
-                    }
-                    if (!is_solid_block(block_pos + ivec3(1,0,0))) {
-                        faces |= uint8_t(0x10);
-                    }
-                    if (!is_solid_block(block_pos + ivec3(-1,0,0))) {
-                        faces |= uint8_t(0x20);
-                    }
-                }
-
-                tmp.ref.faces[encode_chunkcoord(uvec3(block_pos % 4), 0) % 64] = faces;
-
-                int primitives_count = bitCount(uint(faces)) * 2;
-                int vertices_count = approx_unique_cube_vertices(faces);
-
-                for (int i = 0; i < 4; i++) {
-                    //if (num_meshlets > 100)
-                    //    break;
-
-                    int new_primitives_budget = primitives_budget + subgroupInclusiveAdd(primitives_count);
-                    int new_vertices_budget = vertices_budget + subgroupInclusiveAdd(vertices_count);
-
-                    bool over_budget = new_vertices_budget > 64 || new_primitives_budget > 126;// || ((first >= 0) && ((scan_idx + int(gl_SubgroupInvocationID)) - first) > 32);
-                    if (subgroupAny(over_budget)) {
-                        // the last scan iteration was under-budget but there's nothing we can add from the new one, complete it
-                        if (subgroupAll(over_budget)) {
-
-                            //if (subgroupElect())
-                            //    debugPrintfEXT("meshlet %d %d has %d, %d vtx/prims in it\n", num_meshlets, scan_idx, vertices_budget, primitives_budget);
-
-                            int meshlet_idx = allocate_next_meshlet_idx();
-                            ts_out.meshlets[meshlet_idx] = MeshletPayload(uint16_t(first), uint16_t(scan_idx), uint8_t(vertices_budget), uint8_t(primitives_budget));
-                            primitives_budget = 0;
-                            vertices_budget = 0;
-
-                            first = -1;
-                        } else {
-                            uint furthest_not_over_budget = subgroupBallotFindMSB(subgroupBallot(!over_budget));
-
-                            if (gl_SubgroupInvocationID <= furthest_not_over_budget) {
-                                primitives_count = 0;
-                                vertices_count = 0;
-                            }
-
-                            //if (subgroupElect())
-                            //    debugPrintfEXT("meshlet %d %d has %d, %d vtx/prims in it\n", num_meshlets, scan_idx + furthest_not_over_budget + 1, vertices_budget, primitives_budget);
-
-                            int biggest_viable_primitive_budget = subgroupMax(over_budget ? 0 : new_primitives_budget);
-                            int biggest_viable_vertices_budget = subgroupMax(over_budget ? 0 : new_vertices_budget);
-
-                            int meshlet_idx = allocate_next_meshlet_idx();
-                            ts_out.meshlets[meshlet_idx] = MeshletPayload(uint16_t(first), uint16_t(scan_idx + furthest_not_over_budget + 1), uint8_t(biggest_viable_vertices_budget), uint8_t(biggest_viable_primitive_budget));
-                            primitives_budget = 0;
-                            vertices_budget = 0;
-
-                            first = int(scan_idx + furthest_not_over_budget + 1);
-                        }
-                    } else {
-                        bool has_faces = faces != 0;
-                        if (subgroupAny(has_faces)) {
-                            if (first == -1) {
-                                uint first_thread_with_faces = subgroupBallotFindLSB(subgroupBallot(has_faces));
-                                first = int(scan_idx + first_thread_with_faces);
-                            }
-                            uint last_thread_with_faces = subgroupBallotFindMSB(subgroupBallot(has_faces));
-                            last = int(scan_idx + last_thread_with_faces + 1);
-                        }
-
-                        primitives_budget += subgroupAdd(primitives_count);
-                        vertices_budget += subgroupAdd(vertices_count);
-                        break;
-                    }
-                }
-            }
-
-            if (primitives_budget > 0) {
-                int meshlet_idx = allocate_next_meshlet_idx();
-                ts_out.meshlets[meshlet_idx] = MeshletPayload(uint16_t(first), uint16_t(last), uint8_t(vertices_budget), uint8_t(primitives_budget));
-            }
-
-            barrier();
-            EmitMeshTasksEXT(meshlets_counter, 1, 1);
-            return;
-        }
-    } else {
-        // emit NOTHING
-        EmitMeshTasksEXT(0, 0, 0);
-    }
 }
