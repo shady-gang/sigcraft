@@ -12,63 +12,16 @@ extern "C" {
 
 using namespace nasl;
 
-using add_vertex_fn_t = void(ivec3, vec2, ivec3);
-using generate_face_fn_t = void(const std::function<add_vertex_fn_t>&);
-using add_face_fn_t = void(ivec3, vec3, const std::function<generate_face_fn_t>&);
-
-static auto minus_x_face = [](const std::function<add_vertex_fn_t>& add_vertex) {
-    add_vertex(ivec3(0, 0, 0), vec2(0, 0), ivec3(-1, 0, 0));
-    add_vertex(ivec3(0, 1, 0), vec2(0, 1), ivec3(-1, 0, 0));
-    add_vertex(ivec3(0, 1, 1), vec2(1, 1), ivec3(-1, 0, 0));
-    add_vertex(ivec3(0, 0, 0), vec2(0, 0), ivec3(-1, 0, 0));
-    add_vertex(ivec3(0, 1, 1), vec2(1, 1), ivec3(-1, 0, 0));
-    add_vertex(ivec3(0, 0, 1), vec2(1, 0), ivec3(-1, 0, 0));
+enum class BlockFace {
+    Top,
+    Bottom,
+    PlusZ,
+    MinusZ,
+    PlusX,
+    MinusX,
 };
 
-static auto plus_x_face = [](const std::function<add_vertex_fn_t>& add_vertex) {
-    add_vertex(ivec3(1, 1, 0), vec2(1, 1), ivec3(1, 0, 0));
-    add_vertex(ivec3(1, 0, 0), vec2(1, 0), ivec3(1, 0, 0));
-    add_vertex(ivec3(1, 1, 1), vec2(0, 1), ivec3(1, 0, 0));
-    add_vertex(ivec3(1, 1, 1), vec2(0, 1), ivec3(1, 0, 0));
-    add_vertex(ivec3(1, 0, 0), vec2(1, 0), ivec3(1, 0, 0));
-    add_vertex(ivec3(1, 0, 1), vec2(0, 0), ivec3(1, 0, 0));
-};
-
-static auto minus_z_face = [](const std::function<add_vertex_fn_t>& add_vertex) {
-    add_vertex(ivec3(1, 1, 0), vec2(0, 1), ivec3(0, 0, -1));
-    add_vertex(ivec3(0, 0, 0), vec2(1, 0), ivec3(0, 0, -1));
-    add_vertex(ivec3(1, 0, 0), vec2(0, 0), ivec3(0, 0, -1));
-    add_vertex(ivec3(0, 1, 0), vec2(1, 1), ivec3(0, 0, -1));
-    add_vertex(ivec3(0, 0, 0), vec2(1, 0), ivec3(0, 0, -1));
-    add_vertex(ivec3(1, 1, 0), vec2(0, 1), ivec3(0, 0, -1));
-};
-
-static auto plus_z_face = [](const std::function<add_vertex_fn_t>& add_vertex) {
-    add_vertex(ivec3(1, 0, 1), vec2(1, 0), ivec3(0, 0, 1));
-    add_vertex(ivec3(0, 0, 1), vec2(0, 0), ivec3(0, 0, 1));
-    add_vertex(ivec3(1, 1, 1), vec2(1, 1), ivec3(0, 0, 1));
-    add_vertex(ivec3(1, 1, 1), vec2(1, 1), ivec3(0, 0, 1));
-    add_vertex(ivec3(0, 0, 1), vec2(0, 0), ivec3(0, 0, 1));
-    add_vertex(ivec3(0, 1, 1), vec2(0, 1), ivec3(0, 0, 1));
-};
-
-static auto minus_y_face = [](const std::function<add_vertex_fn_t>& add_vertex) {
-    add_vertex(ivec3(0, 0, 0), vec2(0, 0), ivec3(0, -1, 0));
-    add_vertex(ivec3(1, 0, 1), vec2(1, 1), ivec3(0, -1, 0));
-    add_vertex(ivec3(1, 0, 0), vec2(1, 0), ivec3(0, -1, 0));
-    add_vertex(ivec3(1, 0, 1), vec2(1, 1), ivec3(0, -1, 0));
-    add_vertex(ivec3(0, 0, 0), vec2(0, 0), ivec3(0, -1, 0));
-    add_vertex(ivec3(0, 0, 1), vec2(0, 1), ivec3(0, -1, 0));
-};
-
-static std::function<generate_face_fn_t> plus_y_face = [](const std::function<add_vertex_fn_t>& add_vertex) {
-    add_vertex(ivec3(1, 1, 1), vec2(1, 0), ivec3(0, 1, 0));
-    add_vertex(ivec3(0, 1, 0), vec2(0, 1), ivec3(0, 1, 0));
-    add_vertex(ivec3(1, 1, 0), vec2(1, 1), ivec3(0, 1, 0));
-    add_vertex(ivec3(0, 1, 1), vec2(0, 0), ivec3(0, 1, 0));
-    add_vertex(ivec3(0, 1, 0), vec2(0, 1), ivec3(0, 1, 0));
-    add_vertex(ivec3(1, 1, 1), vec2(1, 0), ivec3(0, 1, 0));
-};
+using add_face_fn_t = void(ivec3, vec3, BlockFace);
 
 static BlockData access_safe(const ChunkData* chunk, ChunkNeighborsUnsafe& neighbours, int x, int y, int z) {
     unsigned int i, k;
@@ -113,51 +66,143 @@ void traverse_chunk_mesh(const ChunkData* chunk, ChunkNeighborsUnsafe& neighbour
                         color.x = block_colors[block_data].r;
                         color.y = block_colors[block_data].g;
                         color.z = block_colors[block_data].b;
+
                         if (access_safe(chunk, neighbours, x, world_y + 1, z) == BlockAir) {
-                            add_face(ivec3(x, world_y, z), color, plus_y_face);
+                            add_face(ivec3(x, world_y, z), color, BlockFace::Top);
                         }
                         if (access_safe(chunk, neighbours, x, world_y - 1, z) == BlockAir) {
-                            add_face(ivec3(x, world_y, z), color, minus_y_face);
+                            add_face(ivec3(x, world_y, z), color, BlockFace::Bottom);
                         }
-
-                        if (access_safe(chunk, neighbours, x + 1, world_y, z) == BlockAir) {
-                            add_face(ivec3(x, world_y, z), color, plus_x_face);
-                        }
-                        if (access_safe(chunk, neighbours, x - 1, world_y, z) == BlockAir) {
-                            add_face(ivec3(x, world_y, z), color, minus_x_face);
-                        }
-
                         if (access_safe(chunk, neighbours, x, world_y, z + 1) == BlockAir) {
-                            add_face(ivec3(x, world_y, z), color, plus_z_face);
+                            add_face(ivec3(x, world_y, z), color, BlockFace::PlusZ);
                         }
                         if (access_safe(chunk, neighbours, x, world_y, z - 1) == BlockAir) {
-                            add_face(ivec3(x, world_y, z), color, minus_z_face);
+                            add_face(ivec3(x, world_y, z), color, BlockFace::MinusZ);
+                        }
+                        if (access_safe(chunk, neighbours, x + 1, world_y, z) == BlockAir) {
+                            add_face(ivec3(x, world_y, z), color, BlockFace::PlusX);
+                        }
+                        if (access_safe(chunk, neighbours, x - 1, world_y, z) == BlockAir) {
+                            add_face(ivec3(x, world_y, z), color, BlockFace::MinusX);
                         }
                     }
                 }
     }
 }
 
-auto make_vertex_encoder(const ivec3& block_position, const vec3& color) {
-    return [&](ivec3 position, vec2 uv, ivec3 normal) {
-        ChunkMesh::Vertex v;
-        v.vx = block_position.x + position.x;
-        v.vy = block_position.y + position.y;
-        v.vz = block_position.z + position.z;
-        v.tt = uv.x * 255;
-        v.ss = uv.y * 255;
-        v.nnx = normal.x * 127 + 128;
-        v.nny = normal.y * 127 + 128;
-        v.nnz = normal.z * 127 + 128;
-        v.br = color.x * 255;
-        v.bg = color.y * 255;
-        v.bb = color.z * 255;
-        return v;
-    };
+using add_vertex_fn_t = void(ivec3, vec2);
+using generate_face_vertices_fn_t = void(const std::function<add_vertex_fn_t>&);
+
+ivec3 face2normal(BlockFace face) {
+    switch (face) {
+        case BlockFace::Top: return ivec3(0, 1, 0);
+        case BlockFace::Bottom: return ivec3(0, -1, 0);
+        case BlockFace::PlusZ: return ivec3(0, 0, 1);
+        case BlockFace::MinusZ: return ivec3(0, 0, -1);
+        case BlockFace::PlusX: return ivec3(1, 0, 0);
+        case BlockFace::MinusX: return ivec3(-1, 0, 0);
+    }
+}
+
+static auto plus_y_face = [](const std::function<add_vertex_fn_t>& add_vertex) {
+    add_vertex(ivec3(1, 1, 1), vec2(1, 0));
+    add_vertex(ivec3(0, 1, 0), vec2(0, 1));
+    add_vertex(ivec3(1, 1, 0), vec2(1, 1));
+    add_vertex(ivec3(0, 1, 1), vec2(0, 0));
+    add_vertex(ivec3(0, 1, 0), vec2(0, 1));
+    add_vertex(ivec3(1, 1, 1), vec2(1, 0));
+};
+
+static auto minus_y_face = [](const std::function<add_vertex_fn_t>& add_vertex) {
+    add_vertex(ivec3(0, 0, 0), vec2(0, 0));
+    add_vertex(ivec3(1, 0, 1), vec2(1, 1));
+    add_vertex(ivec3(1, 0, 0), vec2(1, 0));
+    add_vertex(ivec3(1, 0, 1), vec2(1, 1));
+    add_vertex(ivec3(0, 0, 0), vec2(0, 0));
+    add_vertex(ivec3(0, 0, 1), vec2(0, 1));
+};
+
+static auto plus_z_face = [](const std::function<add_vertex_fn_t>& add_vertex) {
+    add_vertex(ivec3(1, 0, 1), vec2(1, 0));
+    add_vertex(ivec3(0, 0, 1), vec2(0, 0));
+    add_vertex(ivec3(1, 1, 1), vec2(1, 1));
+    add_vertex(ivec3(1, 1, 1), vec2(1, 1));
+    add_vertex(ivec3(0, 0, 1), vec2(0, 0));
+    add_vertex(ivec3(0, 1, 1), vec2(0, 1));
+};
+
+static auto minus_z_face = [](const std::function<add_vertex_fn_t>& add_vertex) {
+    add_vertex(ivec3(1, 1, 0), vec2(0, 1));
+    add_vertex(ivec3(0, 0, 0), vec2(1, 0));
+    add_vertex(ivec3(1, 0, 0), vec2(0, 0));
+    add_vertex(ivec3(0, 1, 0), vec2(1, 1));
+    add_vertex(ivec3(0, 0, 0), vec2(1, 0));
+    add_vertex(ivec3(1, 1, 0), vec2(0, 1));
+};
+
+static auto plus_x_face = [](const std::function<add_vertex_fn_t>& add_vertex) {
+    add_vertex(ivec3(1, 1, 0), vec2(1, 1));
+    add_vertex(ivec3(1, 0, 0), vec2(1, 0));
+    add_vertex(ivec3(1, 1, 1), vec2(0, 1));
+    add_vertex(ivec3(1, 1, 1), vec2(0, 1));
+    add_vertex(ivec3(1, 0, 0), vec2(1, 0));
+    add_vertex(ivec3(1, 0, 1), vec2(0, 0));
+};
+
+static auto minus_x_face = [](const std::function<add_vertex_fn_t>& add_vertex) {
+    add_vertex(ivec3(0, 0, 0), vec2(0, 0));
+    add_vertex(ivec3(0, 1, 0), vec2(0, 1));
+    add_vertex(ivec3(0, 1, 1), vec2(1, 1));
+    add_vertex(ivec3(0, 0, 0), vec2(0, 0));
+    add_vertex(ivec3(0, 1, 1), vec2(1, 1));
+    add_vertex(ivec3(0, 0, 1), vec2(1, 0));
+};
+
+static std::array<std::function<generate_face_vertices_fn_t>, 6> generate_face_vertices = {
+    plus_y_face,
+    minus_y_face,
+    plus_z_face,
+    minus_z_face,
+    plus_x_face,
+    minus_x_face,
+};
+
+ChunkMesh::Vertex encode_vertex(ivec3 position, vec2 uv, ivec3 normal, const vec3& color) {
+    ChunkMesh::Vertex v;
+    v.vx = position.x;
+    v.vy = position.y;
+    v.vz = position.z;
+    v.tt = uv.x * 255;
+    v.ss = uv.y * 255;
+    // v.nnx = normal.x * 127 + 128;
+    // v.nny = normal.y * 127 + 128;
+    // v.nnz = normal.z * 127 + 128;
+    // v.br = color.x * 255;
+    // v.bg = color.y * 255;
+    // v.bb = color.z * 255;
+    return v;
+}
+
+ChunkMesh::Face encode_face(vec3 color, BlockFace face) {
+    ChunkMesh::Face f;
+    f.r = color.x * 255;
+    f.g = color.y * 255;
+    f.b = color.z * 255;
+    f.orientation = (int) face;
+    return f;
+}
+
+template<typename T>
+void upload(imr::Device& d, std::unique_ptr<imr::Buffer>& dst, const std::vector<T>& src) {
+    size_t buffer_size = src.size() * sizeof(T);
+    dst = std::make_unique<imr::Buffer>(d, buffer_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    dst->uploadDataSync(0, buffer_size, (void*) src.data());
 }
 
 ChunkMesh::ChunkMesh(imr::Device& d, ChunkNeighbors& n) {
-    std::vector<uint8_t> g;
+    std::vector<Vertex> vertex_data;
+    std::vector<Face> face_data;
+
     ChunkNeighborsUnsafe unsafe {};
     for (size_t x = 0; x < 3; x++) {
         for (size_t z = 0; z < 3; z++) {
@@ -166,29 +211,23 @@ ChunkMesh::ChunkMesh(imr::Device& d, ChunkNeighbors& n) {
     }
 
     num_verts = 0;
-    std::function<add_face_fn_t> add_face = [&](ivec3 block_position, vec3 color, const std::function<generate_face_fn_t>& gen_face) {
-        auto encoder = make_vertex_encoder(block_position, color);
-        std::function<add_vertex_fn_t> add_vertex = [&](ivec3 position, vec2 uv, ivec3 normal){
-            ChunkMesh::Vertex v = encoder(position, uv, normal);
-            uint8_t tmp[sizeof(v)];
-            memcpy(tmp, &v, sizeof(v));
-            for (auto b : tmp)
-                g.push_back(b);
+    std::function<add_face_fn_t> add_face = [&](ivec3 block_position, vec3 color, BlockFace face) {
+        std::function<add_vertex_fn_t> add_vertex = [&](ivec3 position, vec2 uv){
+            vertex_data.push_back(encode_vertex(block_position + position, uv, face2normal(face), color));
             num_verts += 1;
         };
-        gen_face(add_vertex);
+        generate_face_vertices[(int)face](add_vertex);
+        Face f = encode_face(color, face);
+        face_data.push_back(f);
     };
     traverse_chunk_mesh(unsafe.neighbours[1][1], unsafe, add_face);
 
     //fprintf(stderr, "%zu vertices, totalling %zu KiB of data\n", num_verts, num_verts * sizeof(float) * 5 / 1024);
     //fflush(stderr);
 
-    size_t buffer_size = g.size() * sizeof(uint8_t);
-    void* buffer = g.data();
-
-    if (buffer_size > 0) {
-        buf = std::make_unique<imr::Buffer>(d, buffer_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        buf->uploadDataSync(0, buffer_size, buffer);
+    if (num_verts > 0) {
+        upload(d, vertices, vertex_data);
+        upload(d, faces, face_data);
     }
 }
 

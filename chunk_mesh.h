@@ -16,7 +16,8 @@ struct ChunkNeighborsUnsafe {
 };
 
 struct ChunkMesh {
-    std::unique_ptr<imr::Buffer> buf;
+    std::unique_ptr<imr::Buffer> vertices;
+    std::unique_ptr<imr::Buffer> faces;
     size_t num_verts;
 
     ChunkMesh(imr::Device&, ChunkNeighbors& n);
@@ -25,12 +26,16 @@ struct ChunkMesh {
         int16_t vx, vy, vz;
         uint8_t tt;
         uint8_t ss;
-        uint8_t nnx, nny, nnz;
-        uint8_t pad;
-        uint8_t br, bg, bb, pad2;
+        // uint8_t nnx, nny, nnz;
+        // uint8_t pad;
+        // uint8_t br, bg, bb, pad2;
     };
 
-    static_assert(sizeof(Vertex) == sizeof(uint8_t) * 16);
+    struct Face {
+        uint8_t r, g, b, orientation;
+    };
+
+    static_assert(sizeof(Vertex) == sizeof(uint8_t) * 8);
 };
 
 constexpr static unsigned lod_res[] = { 16, 8, 4, 2, 1 };

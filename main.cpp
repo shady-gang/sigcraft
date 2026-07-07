@@ -29,6 +29,7 @@ struct {
     mat4 matrix;
     ivec3 camera_chunk_pos;
     float time;
+    uint64_t face_data;
 } vs_push_constants;
 
 Camera camera = {
@@ -89,18 +90,18 @@ struct Shaders {
                 .format = VK_FORMAT_R16G16B16_SINT,
                 .offset = 0,
             },
-            {
-                .location = 1,
-                .binding = 0,
-                .format = VK_FORMAT_R8G8B8_SNORM,
-                .offset = offsetof(ChunkMesh::Vertex, nnx),
-            },
-            {
-                .location = 2,
-                .binding = 0,
-                .format = VK_FORMAT_R8G8B8_UNORM,
-                .offset = offsetof(ChunkMesh::Vertex, br),
-            },
+            //{
+            //    .location = 1,
+            //    .binding = 0,
+            //    .format = VK_FORMAT_R8G8B8_SNORM,
+            //    .offset = offsetof(ChunkMesh::Vertex, nnx),
+            //},
+            //{
+            //    .location = 2,
+            //    .binding = 0,
+            //    .format = VK_FORMAT_R8G8B8_UNORM,
+            //    .offset = offsetof(ChunkMesh::Vertex, br),
+            //},
         };
 
         VkPipelineVertexInputStateCreateInfo vertex_input {
@@ -175,7 +176,8 @@ int main(int argc, char** argv) {
         if (key == GLFW_KEY_F2 && action == GLFW_PRESS) {
             wireframe ^= true;
             reload_shaders = true;
-        }if (key == GLFW_KEY_F3 && action == GLFW_PRESS) {
+        }
+        if (key == GLFW_KEY_F3 && action == GLFW_PRESS) {
             mesh_shader ^= true;
             reload_shaders = true;
         }
@@ -432,8 +434,9 @@ int main(int argc, char** argv) {
                             continue;
 
                         vs_push_constants.camera_chunk_pos = { chunk->cx, 0, chunk->cz };
-                        vkCmdPushConstants(cmdbuf, pipeline->layout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(vs_push_constants), &vs_push_constants);
-                        VkBuffer vb = mesh->buf->handle;
+                        vs_push_constants.face_data = mesh->faces->device_address();
+                        vkCmdPushConstants(cmdbuf, pipeline->layout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(vs_push_constants), &vs_push_constants);
+                        VkBuffer vb = mesh->vertices->handle;
                         VkDeviceSize offset = 0;
                         vkCmdBindVertexBuffers(cmdbuf, 0, 1, &vb, &offset);
                         device.dispatch.cmdDraw(cmdbuf, mesh->num_verts, 1, 0, 0);
