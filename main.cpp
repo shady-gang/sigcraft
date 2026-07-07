@@ -40,7 +40,7 @@ bool wireframe = false;
 
 struct Shaders {
     //std::vector<std::string> files = { "basic.vert.spv", "basic.frag.spv" };
-    std::vector<std::string> files = { "voxel.task.spv", "voxel.mesh.spv", "basic.frag.spv" };
+    std::vector<std::string> files = { "voxel.task.spv", "voxel.mesh.spv", "voxel.frag.spv" };
 
     std::vector<std::unique_ptr<imr::ShaderModule>> modules;
     std::vector<std::unique_ptr<imr::ShaderEntryPoint>> entry_points;
