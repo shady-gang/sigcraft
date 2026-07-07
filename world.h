@@ -47,11 +47,11 @@ struct Chunk {
     int cx, cz;
     McChunk* enkl_chunk = nullptr;
     ChunkData data = {};
-    //struct MeshContainer {
-    //    std::shared_ptr<ChunkMesh> mesh;
-    //    bool task_spawned = false;
-    //};
-    //Mutex<MeshContainer> mesh;
+    struct MeshContainer {
+        std::shared_ptr<ChunkMesh> mesh;
+        bool task_spawned = false;
+    };
+    Mutex<MeshContainer> mesh;
     struct DataContainer {
         std::shared_ptr<ChunkVoxelData> data;
         bool task_spawned = false;
