@@ -12,10 +12,10 @@
 #extension GL_EXT_maximal_reconvergence : enable
 #extension GL_EXT_debug_printf : enable
 
-layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
-#define MAX_VERTS 64
-#define MAX_PRIMS 126
+#define MAX_VERTS 256
+#define MAX_PRIMS 256
 
 layout(triangles, max_vertices = MAX_VERTS, max_primitives = MAX_PRIMS) out;
 
@@ -212,6 +212,14 @@ const vec3 vertex_offsets[8] = {
     vec3(1, 1, 1),
 };
 
+uint safe_prim_idx(uint idx) {
+    return idx % MAX_PRIMS;
+}
+
+uint safe_vert_idx(uint idx) {
+    return idx % MAX_VERTS;
+}
+
 void main() {
     MeshletPayload meshlet = ChunkTmpRef(ts_in.tmp).ref.meshlets[gl_WorkGroupID.x];
     SetMeshOutputsEXT(meshlet.num_verts, meshlet.num_prims);
@@ -242,6 +250,7 @@ void main() {
     }
 
     //int window_length = end - start;
+    int anti_hang = 256;
     for (int scan_idx = start; scan_idx < end; scan_idx += int(gl_WorkGroupSize.x)) {
         uint block_idx = scan_idx + gl_LocalInvocationIndex;
         if (block_idx < end && block_idx < 4096) {
@@ -266,7 +275,7 @@ void main() {
             //    debugPrintfEXT("CP [%d %d %d] tid: %d primitive_buffer_length: %d vertex_buffer_length: %d base_vertex_id: %d primitive_idx: %d new_vertices: %d new faces: %d old_vertex_buffer_length: %d num_vertices: %d num_faces: %d\n",
             //        ts_in.chunk_position.x, ts_in.chunk_position.y, ts_in.chunk_position.z, gl_SubgroupInvocationID,
             //        primitive_buffer_length, vertex_buffer_length, base_vertex_id, primitive_idx, new_vertices, new_faces, old_vertex_buffer_length, num_vertices, num_faces);
-            //    return;
+                return;
             }
 
             uint base_vertex_id = int(allocated_vertex_space + subgroupExclusiveAdd(num_vertices));
@@ -278,70 +287,70 @@ void main() {
                 for (int i = 0; i < 8; i++) {
                     if (((vertices >> i) & 0x1) != 0) {
                         v[i] = base_vertex_id + v_idx++;
-                        gl_MeshVerticesEXT[v[i]].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) + vec3(block_pos) + vertex_offsets[i], 1.0);
+                        gl_MeshVerticesEXT[safe_vert_idx(v[i])].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) + vec3(block_pos) + vertex_offsets[i], 1.0);
                         // vertex_offsets
                     }
                 }
 
                 if ((faces & 0x1) != 0) {
-                    //colorOut[primitive_idx] = color;
-                    //normalOut[primitive_idx] = vec3(0, 1, 0);
-                    gl_MeshPrimitivesEXT[primitive_idx].gl_PrimitiveID = int(primitive_idx);
-                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v[4], v[7], v[5]);
-                    //colorOut[primitive_idx] = color;
-                    //normalOut[primitive_idx] = vec3(0, 1, 0);
-                    gl_MeshPrimitivesEXT[primitive_idx].gl_PrimitiveID = int(primitive_idx);
-                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v[4], v[6], v[7]);
+                    //colorOut[safe_prim_idx(primitive_idx)] = color;
+                    //normalOut[safe_prim_idx(primitive_idx)] = vec3(0, 1, 0);
+                    gl_MeshPrimitivesEXT[safe_prim_idx(primitive_idx)].gl_PrimitiveID = int(primitive_idx);
+                    gl_PrimitiveTriangleIndicesEXT[safe_prim_idx(primitive_idx++)] = uvec3(v[4], v[7], v[5]);
+                    //colorOut[safe_prim_idx(primitive_idx)] = color;
+                    //normalOut[safe_prim_idx(primitive_idx)] = vec3(0, 1, 0);
+                    gl_MeshPrimitivesEXT[safe_prim_idx(primitive_idx)].gl_PrimitiveID = int(primitive_idx);
+                    gl_PrimitiveTriangleIndicesEXT[safe_prim_idx(primitive_idx++)] = uvec3(v[4], v[6], v[7]);
                 }
                 if ((faces & 0x2) != 0) {
-                    //colorOut[primitive_idx] = color;
-                    //normalOut[primitive_idx] = vec3(0, -1, 0);
-                    gl_MeshPrimitivesEXT[primitive_idx].gl_PrimitiveID = int(primitive_idx);
-                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v[0], v[3], v[2]);
-                    //colorOut[primitive_idx] = color;
-                    //normalOut[primitive_idx] = vec3(0, -1, 0);
-                    gl_MeshPrimitivesEXT[primitive_idx].gl_PrimitiveID = int(primitive_idx);
-                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v[0], v[1], v[3]);
+                    //colorOut[safe_prim_idx(primitive_idx)] = color;
+                    //normalOut[safe_prim_idx(primitive_idx)] = vec3(0, -1, 0);
+                    gl_MeshPrimitivesEXT[safe_prim_idx(primitive_idx)].gl_PrimitiveID = int(primitive_idx);
+                    gl_PrimitiveTriangleIndicesEXT[safe_prim_idx(primitive_idx++)] = uvec3(v[0], v[3], v[2]);
+                    //colorOut[safe_prim_idx(primitive_idx)] = color;
+                    //normalOut[safe_prim_idx(primitive_idx)] = vec3(0, -1, 0);
+                    gl_MeshPrimitivesEXT[safe_prim_idx(primitive_idx)].gl_PrimitiveID = int(primitive_idx);
+                    gl_PrimitiveTriangleIndicesEXT[safe_prim_idx(primitive_idx++)] = uvec3(v[0], v[1], v[3]);
                 }
                 if ((faces & 0x4) != 0) {
-                    //colorOut[primitive_idx] = color;
-                    //normalOut[primitive_idx] = vec3(0, 0, 1);
-                    gl_MeshPrimitivesEXT[primitive_idx].gl_PrimitiveID = int(primitive_idx);
-                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v[1], v[5], v[7]);
-                    //colorOut[primitive_idx] = color;
-                    //normalOut[primitive_idx] = vec3(0, 0, 1);
-                    gl_MeshPrimitivesEXT[primitive_idx].gl_PrimitiveID = int(primitive_idx);
-                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v[1], v[7], v[3]);
+                    //colorOut[safe_prim_idx(primitive_idx)] = color;
+                    //normalOut[safe_prim_idx(primitive_idx)] = vec3(0, 0, 1);
+                    gl_MeshPrimitivesEXT[safe_prim_idx(primitive_idx)].gl_PrimitiveID = int(primitive_idx);
+                    gl_PrimitiveTriangleIndicesEXT[safe_prim_idx(primitive_idx++)] = uvec3(v[1], v[5], v[7]);
+                    //colorOut[safe_prim_idx(primitive_idx)] = color;
+                    //normalOut[safe_prim_idx(primitive_idx)] = vec3(0, 0, 1);
+                    gl_MeshPrimitivesEXT[safe_prim_idx(primitive_idx)].gl_PrimitiveID = int(primitive_idx);
+                    gl_PrimitiveTriangleIndicesEXT[safe_prim_idx(primitive_idx++)] = uvec3(v[1], v[7], v[3]);
                 }
                 if ((faces & 0x8) != 0) {
-                    //colorOut[primitive_idx] = color;
-                    //normalOut[primitive_idx] = vec3(0, 0, -1);
-                    gl_MeshPrimitivesEXT[primitive_idx].gl_PrimitiveID = int(primitive_idx);
-                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v[0], v[6], v[4]);
-                    //colorOut[primitive_idx] = color;
-                    //normalOut[primitive_idx] = vec3(0, 0, -1);
-                    gl_MeshPrimitivesEXT[primitive_idx].gl_PrimitiveID = int(primitive_idx);
-                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v[0], v[2], v[6]);
+                    //colorOut[safe_prim_idx(primitive_idx)] = color;
+                    //normalOut[safe_prim_idx(primitive_idx)] = vec3(0, 0, -1);
+                    gl_MeshPrimitivesEXT[safe_prim_idx(primitive_idx)].gl_PrimitiveID = int(primitive_idx);
+                    gl_PrimitiveTriangleIndicesEXT[safe_prim_idx(primitive_idx++)] = uvec3(v[0], v[6], v[4]);
+                    //colorOut[safe_prim_idx(primitive_idx)] = color;
+                    //normalOut[safe_prim_idx(primitive_idx)] = vec3(0, 0, -1);
+                    gl_MeshPrimitivesEXT[safe_prim_idx(primitive_idx)].gl_PrimitiveID = int(primitive_idx);
+                    gl_PrimitiveTriangleIndicesEXT[safe_prim_idx(primitive_idx++)] = uvec3(v[0], v[2], v[6]);
                 }
                 if ((faces & 0x10) != 0) {
-                    //colorOut[primitive_idx] = color;
-                    //normalOut[primitive_idx] = vec3(1, 0, 0);
-                    gl_MeshPrimitivesEXT[primitive_idx].gl_PrimitiveID = int(primitive_idx);
-                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v[2], v[3], v[7]);
-                    //colorOut[primitive_idx] = color;
-                    //normalOut[primitive_idx] = vec3(1, 0, 0);
-                    gl_MeshPrimitivesEXT[primitive_idx].gl_PrimitiveID = int(primitive_idx);
-                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v[2], v[7], v[6]);
+                    //colorOut[safe_prim_idx(primitive_idx)] = color;
+                    //normalOut[safe_prim_idx(primitive_idx)] = vec3(1, 0, 0);
+                    gl_MeshPrimitivesEXT[safe_prim_idx(primitive_idx)].gl_PrimitiveID = int(primitive_idx);
+                    gl_PrimitiveTriangleIndicesEXT[safe_prim_idx(primitive_idx++)] = uvec3(v[2], v[3], v[7]);
+                    //colorOut[safe_prim_idx(primitive_idx)] = color;
+                    //normalOut[safe_prim_idx(primitive_idx)] = vec3(1, 0, 0);
+                    gl_MeshPrimitivesEXT[safe_prim_idx(primitive_idx)].gl_PrimitiveID = int(primitive_idx);
+                    gl_PrimitiveTriangleIndicesEXT[safe_prim_idx(primitive_idx++)] = uvec3(v[2], v[7], v[6]);
                 }
                 if ((faces & 0x20) != 0) {
-                    //colorOut[primitive_idx] = color;
-                    //normalOut[primitive_idx] = vec3(-1, 0, 0);
-                    gl_MeshPrimitivesEXT[primitive_idx].gl_PrimitiveID = int(primitive_idx);
-                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v[0], v[5], v[1]);
-                    //colorOut[primitive_idx] = color;
-                    //normalOut[primitive_idx] = vec3(-1, 0, 0);
-                    gl_MeshPrimitivesEXT[primitive_idx].gl_PrimitiveID = int(primitive_idx);
-                    gl_PrimitiveTriangleIndicesEXT[primitive_idx++] = uvec3(v[0], v[4], v[5]);
+                    //colorOut[safe_prim_idx(primitive_idx)] = color;
+                    //normalOut[safe_prim_idx(primitive_idx)] = vec3(-1, 0, 0);
+                    gl_MeshPrimitivesEXT[safe_prim_idx(primitive_idx)].gl_PrimitiveID = int(primitive_idx);
+                    gl_PrimitiveTriangleIndicesEXT[safe_prim_idx(primitive_idx++)] = uvec3(v[0], v[5], v[1]);
+                    //colorOut[safe_prim_idx(primitive_idx)] = color;
+                    //normalOut[safe_prim_idx(primitive_idx)] = vec3(-1, 0, 0);
+                    gl_MeshPrimitivesEXT[safe_prim_idx(primitive_idx)].gl_PrimitiveID = int(primitive_idx);
+                    gl_PrimitiveTriangleIndicesEXT[safe_prim_idx(primitive_idx++)] = uvec3(v[0], v[4], v[5]);
                 }
             }
         } else {
@@ -350,7 +359,7 @@ void main() {
 //break;
     }
 
-    barrier();
+    //barrier();
     //if (gl_SubgroupInvocationID == 0) {
         if (primitive_buffer_length != meshlet.num_prims)
             debugPrintfEXT("OH NO num prims %d != %d, num verts %d vs %d, meshlet %d, range=[%d %d]\n", primitive_buffer_length, meshlet.num_prims, vertex_buffer_length, meshlet.num_verts, gl_WorkGroupID.x, start, end);

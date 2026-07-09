@@ -192,8 +192,15 @@ bool is_solid_block(ivec3 pos) {
     return safe_access(pos) != 0;
 }
 
+const int face_mask_to_vertex_mask_arr[64] = {
+0, 240, 15, 255, 170, 250, 175, 255, 85, 245, 95, 255, 255, 255, 255, 255, 204,
+252, 207, 255, 238, 254, 239, 255, 221, 253, 223, 255, 255, 255, 255, 255, 51,
+243, 63, 255, 187, 251, 191, 255, 119, 247, 127, 255, 255, 255, 255, 255, 255,
+255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255
+};
+
 uint8_t face_mask_to_vertex_mask(int faces) {
-    int bit_0 = 0x1;
+    /*9int bit_0 = 0x1;
     int bit_1 = 0x2;
     int bit_2 = 0x4;
     int bit_3 = 0x8;
@@ -220,7 +227,8 @@ uint8_t face_mask_to_vertex_mask(int faces) {
     if ((faces & 0x20) != 0) {
         result |= bit_0 | bit_1 | bit_4 | bit_5;
     }
-    return uint8_t(result);
+    return uint8_t(result);*/
+    return uint8_t(face_mask_to_vertex_mask_arr[faces]);
 }
 
 int approx_unique_cube_vertices(uint8_t faces_mask) {
@@ -355,14 +363,14 @@ if (uint64_t(ptr) != 0) {
                 bool has_faces = faces != 0;
 
                 if (subgroupAny(has_faces)) {
-                    for (int i = 0; i < 4; i++) {
+                    for (int i = 0; i < 8; i++) {
                         //if (num_meshlets > 100)
                         //    break;
 
                         int new_primitives_budget = primitives_budget + subgroupInclusiveAdd(primitives_count);
                         int new_vertices_budget = vertices_budget + subgroupInclusiveAdd(vertices_count);
 
-                        bool over_budget = new_vertices_budget > 64 || new_primitives_budget > 126;// || ((first >= 0) && ((scan_idx + int(gl_SubgroupInvocationID)) - first) > 32);
+                        bool over_budget = new_vertices_budget > 256 || new_primitives_budget > 256;// || ((first >= 0) && ((scan_idx + int(gl_SubgroupInvocationID)) - first) > 32);
                         if (subgroupAny(over_budget)) {
                             // the last scan iteration was under-budget but there's nothing we can add from the new one, complete it
                             if (subgroupAll(over_budget)) {
