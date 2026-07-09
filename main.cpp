@@ -221,15 +221,15 @@ int main(int argc, char** argv) {
         s += std::to_string(debug_mode);
         fps_counter.updateGlfwWindowTitle(window, s);
 
+        if (reload_shaders) {
+            swapchain.drain();
+            shaders = std::make_unique<Shaders>(device, swapchain, mesh_shader);
+            reload_shaders = false;
+        }
+
         swapchain.renderFrameSimplified([&](imr::Swapchain::SimplifiedRenderContext& context) {
             camera_update(window, &camera_input);
             camera_move_freelook(&camera, &camera_input, &camera_state, delta);
-
-            if (reload_shaders) {
-                swapchain.drain();
-                shaders = std::make_unique<Shaders>(device, swapchain, mesh_shader);
-                reload_shaders = false;
-            }
 
             auto& image = context.image();
             auto& cmdbuf = context.cmdbuf();
