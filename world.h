@@ -9,6 +9,7 @@ extern "C" {
 }
 
 struct ChunkMesh;
+struct ChunkMeshlets;
 struct ChunkVoxelData;
 
 #include "rustex.h"
@@ -52,6 +53,11 @@ struct Chunk {
         bool task_spawned = false;
     };
     Mutex<MeshContainer> mesh;
+    struct MeshletContainer {
+        std::shared_ptr<ChunkMeshlets> mesh;
+        bool task_spawned = false;
+    };
+    Mutex<MeshletContainer> meshlets;
     struct DataContainer {
         std::shared_ptr<ChunkVoxelData> data;
         bool task_spawned = false;

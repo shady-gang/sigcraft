@@ -39,6 +39,17 @@ struct ChunkMesh {
     static_assert(sizeof(Vertex) == sizeof(uint8_t) * 8);
 };
 
+struct ChunkMeshlets {
+    struct Face {
+        std::array<uint8_t, 4> idx;
+        std::array<uint8_t, 4> rgb_and_face;
+    };
+
+    std::unique_ptr<imr::Buffer> buffer;
+
+    ChunkMeshlets(imr::Device&, ChunkNeighbors& n);
+};
+
 constexpr static unsigned lod_res[] = { 16, 8, 4, 2, 1 };
 constexpr static unsigned lod_offsets[] = { 0, 4096, 4608, 4672, 4680, 4681 };
 

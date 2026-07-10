@@ -27,6 +27,15 @@ struct {
 
 struct {
     mat4 matrix;
+    float time;
+    ivec3 camera_chunk_pos;
+    int debug;
+    int visible_chunks_radius;
+    uint64_t visible_chunks_array;
+} ms_push_constants_no_scratch;
+
+struct {
+    mat4 matrix;
     ivec3 camera_chunk_pos;
     float time;
     uint64_t face_data;
@@ -47,8 +56,14 @@ void camera_update(GLFWwindow*, CameraInput* input);
 
 bool reload_shaders = false;
 bool wireframe = false;
-bool mesh_shader = false;
 bool cache_meshlets = false;
+
+enum Renderer {
+    CPU_MESH,
+    CPU_MESHLETS,
+    GPU_MESHLETS,
+    MAX_RENDERER = GPU_MESHLETS,
+} renderer;
 
 struct Shaders {
     std::vector<std::string> files;
@@ -58,11 +73,18 @@ struct Shaders {
     std::unique_ptr<imr::GraphicsPipeline> graphics_pipeline;
     std::unique_ptr<imr::ComputePipeline> compute_pipeline;
 
-    Shaders(imr::Device& d, imr::Swapchain& swapchain, bool mesh_shader) {
-        if (mesh_shader)
-            files = { "voxel.task.spv", "voxel.mesh.spv", "voxel.frag.spv" };
-        else
-            files = { "basic.vert.spv", "basic.frag.spv" };
+    Shaders(imr::Device& d, imr::Swapchain& swapchain, Renderer renderer) {
+        switch (renderer) {
+            case CPU_MESH:
+                files = { "basic.vert.spv", "basic.frag.spv" };
+                break;
+            case CPU_MESHLETS:
+                files = { "meshlet.task.spv", "meshlet.mesh.spv", "meshlet.frag.spv" };
+                break;
+            case GPU_MESHLETS:
+                files = { "voxel.task.spv", "voxel.mesh.spv", "voxel.frag.spv" };
+                break;
+        }
 
         imr::GraphicsPipeline::RenderTargetsState rts;
         rts.color.push_back((imr::GraphicsPipeline::RenderTarget) {
@@ -155,7 +177,7 @@ struct Shaders {
     }
 };
 
-int radius = 16;
+int radius = 1;
 
 int main(int argc, char** argv) {
     glfwInit();
@@ -174,17 +196,25 @@ int main(int argc, char** argv) {
             radius++;
         if (key == GLFW_KEY_PAGE_DOWN && action == GLFW_PRESS)
             radius--;
-        if (key == GLFW_KEY_F1 && action == GLFW_PRESS)
-            debug_mode = (debug_mode + 1) % 16;
+        if (key == GLFW_KEY_F1 && action == GLFW_PRESS) {
+            renderer = CPU_MESH;
+            reload_shaders = true;
+        }
         if (key == GLFW_KEY_F2 && action == GLFW_PRESS) {
-            wireframe ^= true;
+            renderer = CPU_MESHLETS;
             reload_shaders = true;
         }
         if (key == GLFW_KEY_F3 && action == GLFW_PRESS) {
-            mesh_shader ^= true;
+            renderer = GPU_MESHLETS;
             reload_shaders = true;
         }
+        if (key == GLFW_KEY_M && action == GLFW_PRESS)
+            debug_mode = (debug_mode + 1) % 16;
         if (key == GLFW_KEY_F5 && action == GLFW_PRESS) {
+            wireframe ^= true;
+            reload_shaders = true;
+        }
+        if (key == GLFW_KEY_N && action == GLFW_PRESS) {
             cache_meshlets ^= true;
         }
     });
@@ -209,7 +239,7 @@ int main(int argc, char** argv) {
     std::shared_ptr<imr::Buffer> scratchBuffer;
     bool meshlets_baked = false;
 
-    auto shaders = std::make_unique<Shaders>(device, swapchain, mesh_shader);
+    auto shaders = std::make_unique<Shaders>(device, swapchain, renderer);
 
     auto& vk = device.dispatch;
     while (!glfwWindowShouldClose(window)) {
@@ -223,7 +253,7 @@ int main(int argc, char** argv) {
 
         if (reload_shaders) {
             swapchain.drain();
-            shaders = std::make_unique<Shaders>(device, swapchain, mesh_shader);
+            shaders = std::make_unique<Shaders>(device, swapchain, renderer);
             reload_shaders = false;
         }
 
@@ -304,6 +334,7 @@ int main(int argc, char** argv) {
 
             ms_push_constants.matrix = m;
             vs_push_constants.matrix = m;
+            ms_push_constants_no_scratch.matrix = m;
 
             auto load_chunk = [&](int cx, int cz) {
                 auto loaded = world.get_loaded_chunk(cx, cz);
@@ -321,112 +352,26 @@ int main(int argc, char** argv) {
                 }
             }
 
-            if (mesh_shader) {
-                int visible_chunks_array_size = radius * 2 + 1;
-                std::vector<std::array<uint64_t, CUNK_CHUNK_SECTIONS_COUNT>> visible_chunks;
-                visible_chunks.resize(visible_chunks_array_size * visible_chunks_array_size);
+            switch (renderer) {
+                case CPU_MESHLETS: {
+                    int visible_chunks_array_size = radius * 2 + 1;
+                    std::vector<uint64_t> visible_chunks;
+                    visible_chunks.resize(visible_chunks_array_size * visible_chunks_array_size);
+                    memset(visible_chunks.data(), 0, sizeof(uint64_t) * visible_chunks.size());
 
-                for (auto chunk : world.loaded_chunks()) {
-                    if (abs(chunk->cx - player_chunk_x) > radius || abs(chunk->cz - player_chunk_z) > radius) {
-                        world.unload_chunk(chunk.get());
-                        continue;
-                    }
-
-                    unsigned visible_chunks_array_coord_x = (chunk->cx - player_chunk_x) + radius;
-                    unsigned visible_chunks_array_coord_z = (chunk->cz - player_chunk_z) + radius;
-                    assert(visible_chunks_array_coord_x < visible_chunks_array_size);
-                    assert(visible_chunks_array_coord_z < visible_chunks_array_size);
-                    auto& visible_chunks_array_cell = visible_chunks[visible_chunks_array_coord_x * visible_chunks_array_size + visible_chunks_array_coord_z];
-
-                    auto data_lock = chunk->gpu_data.lock_mut();
-                    auto& data_container = *data_lock;
-                    if (!data_container.data) {
-                        if (data_container.task_spawned)
-                            continue;
-
-                        data_container.task_spawned = true;
-                        tp.schedule([&device, chunk]() {
-                           auto data = std::make_shared<ChunkVoxelData>(device, chunk);
-                           auto data_lock = chunk->gpu_data.lock_mut();
-                           data_lock->data = data;
-                           data_lock->task_spawned = false;
-                        });
-                        continue;
-                    }
-                    auto data = data_container.data;
-
-                    for (int section = 0; section < CUNK_CHUNK_SECTIONS_COUNT; section++) {
-                        if (!data->buf[section]) {
-                            visible_chunks_array_cell[section] = 0;
-                            continue;
-                        }
-
-                        visible_chunks_array_cell[section] = data->buf[section]->device_address();
-                    }
-
-                    cmdbuf.addCleanupAction([=, data = data]() {
-
-                    });
-                }
-
-                auto visible_chunks_array_gpu = std::make_shared<imr::Buffer>(device, sizeof(uint64_t) * CUNK_CHUNK_SECTIONS_COUNT * visible_chunks_array_size * visible_chunks_array_size,
-                                                                              VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-                visible_chunks_array_gpu->uploadDataSync(0, sizeof(uint64_t) * CUNK_CHUNK_SECTIONS_COUNT * visible_chunks_array_size * visible_chunks_array_size, visible_chunks.data());
-                ms_push_constants.camera_chunk_pos = { player_chunk_x, 0 /* the visible chunks array is always offset at Y=0 player_chunk_y*/, player_chunk_z };
-                ms_push_constants.visible_chunks_radius = radius;
-                ms_push_constants.visible_chunks_array = visible_chunks_array_gpu->device_address();
-                ms_push_constants.debug = debug_mode;
-
-                size_t required_scratch_buffer_size = 135264 * visible_chunks_array_size * visible_chunks_array_size;
-                if (!scratchBuffer || scratchBuffer->size != required_scratch_buffer_size) {
-                    if (scratchBuffer) {
-                        // hold onto it till the frame is done
-                        cmdbuf.addCleanupAction([=, scratchBuffer = scratchBuffer]() {});
-                        scratchBuffer = nullptr;
-                    }
-                    scratchBuffer = std::make_shared<imr::Buffer>(device, required_scratch_buffer_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-                    meshlets_baked = false;
-                }
-                ms_push_constants.scratch_buffer = scratchBuffer->device_address();
-
-                if (!cache_meshlets || !meshlets_baked) {
-                    vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, shaders->compute_pipeline->pipeline());
-                    vkCmdPushConstants(cmdbuf, shaders->compute_pipeline->layout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(ms_push_constants), &ms_push_constants);
-                    vkCmdDispatch(cmdbuf, visible_chunks_array_size, CUNK_CHUNK_SECTIONS_COUNT, visible_chunks_array_size);
-                    device.dispatch.cmdPipelineBarrier2(cmdbuf, tmpPtr<VkDependencyInfo>({
-                        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                        .memoryBarrierCount = 1,
-                        .pMemoryBarriers = tmpPtr<VkMemoryBarrier2>({
-                            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-                            .srcStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-                            .dstStageMask = VK_PIPELINE_STAGE_TASK_SHADER_BIT_EXT,
-                            .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
-                        }),
-                    }));
-                }
-                meshlets_baked = true;
-
-                context.frame().withRenderTargets(cmdbuf, { &image }, &*depthBuffer, [&]() {
-                    vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders->graphics_pipeline->pipeline());
-                    vkCmdPushConstants(cmdbuf, shaders->graphics_pipeline->layout(), VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(ms_push_constants), &ms_push_constants);
-
-                    device.dispatch.cmdDrawMeshTasksEXT(cmdbuf, visible_chunks_array_size, CUNK_CHUNK_SECTIONS_COUNT, visible_chunks_array_size);
-                });
-
-                cmdbuf.addCleanupAction([=, visible_chunks_array_gpu = visible_chunks_array_gpu]() {
-
-                });
-            } else {
-                vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders->graphics_pipeline->pipeline());
-                context.frame().withRenderTargets(cmdbuf, { &image }, &*depthBuffer, [&]() {
                     for (auto chunk : world.loaded_chunks()) {
                         if (abs(chunk->cx - player_chunk_x) > radius || abs(chunk->cz - player_chunk_z) > radius) {
                             world.unload_chunk(chunk.get());
                             continue;
                         }
 
-                        auto mesh_lock = chunk->mesh.lock_mut();
+                        unsigned visible_chunks_array_coord_x = (chunk->cx - player_chunk_x) + radius;
+                        unsigned visible_chunks_array_coord_z = (chunk->cz - player_chunk_z) + radius;
+                        assert(visible_chunks_array_coord_x < visible_chunks_array_size);
+                        assert(visible_chunks_array_coord_z < visible_chunks_array_size);
+                        auto& visible_chunks_array_cell = visible_chunks[visible_chunks_array_coord_x * visible_chunks_array_size + visible_chunks_array_coord_z];
+
+                        auto mesh_lock = chunk->meshlets.lock_mut();
                         auto& mesh_container = *mesh_lock;
                         if (!mesh_container.mesh) {
                             if (mesh_container.task_spawned)
@@ -450,8 +395,8 @@ int main(int argc, char** argv) {
                                 mesh_container.task_spawned = true;
                                 tp.schedule([n,&device,chunk = chunk]() {
                                     auto nn = n;
-                                    auto mesh = std::make_shared<ChunkMesh>(device, nn);
-                                    auto mesh_lock = chunk->mesh.lock_mut();
+                                    auto mesh = std::make_shared<ChunkMeshlets>(device, nn);
+                                    auto mesh_lock = chunk->meshlets.lock_mut();
                                     mesh_lock->mesh = mesh;
                                     mesh_lock->task_spawned = false;
                                 });
@@ -459,23 +404,196 @@ int main(int argc, char** argv) {
                             continue;
                         }
                         auto mesh = mesh_container.mesh;
-                        if (mesh->num_verts == 0)
+                        if (!mesh->buffer)
                             continue;
 
-                        vs_push_constants.camera_chunk_pos = { chunk->cx, 0, chunk->cz };
-                        vs_push_constants.face_data = mesh->faces->device_address();
-                        vkCmdPushConstants(cmdbuf, shaders->graphics_pipeline->layout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(vs_push_constants), &vs_push_constants);
-                        vkCmdBindIndexBuffer(cmdbuf, mesh->indices->handle, 0, VK_INDEX_TYPE_UINT32);
-                        //VkBuffer vb = mesh->vertices->handle;
-                        //VkDeviceSize offset = 0;
-                        //vkCmdBindVertexBuffers(cmdbuf, 0, 1, &vb, &offset);
-                        device.dispatch.cmdDrawIndexed(cmdbuf, mesh->num_verts, 1, 0, 0, 0);
+                        visible_chunks_array_cell = mesh->buffer->device_address();
 
                         cmdbuf.addCleanupAction([=, mesh = mesh]() {
 
                         });
                     }
-                });
+
+                    auto visible_chunks_array_gpu = std::make_shared<imr::Buffer>(device, sizeof(uint64_t) * visible_chunks_array_size * visible_chunks_array_size,
+                                                                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+                    visible_chunks_array_gpu->uploadDataSync(0, sizeof(uint64_t) * visible_chunks_array_size * visible_chunks_array_size, visible_chunks.data());
+                    ms_push_constants_no_scratch.camera_chunk_pos = { player_chunk_x, 0 /* the visible chunks array is always offset at Y=0 player_chunk_y*/, player_chunk_z };
+                    ms_push_constants_no_scratch.visible_chunks_radius = radius;
+                    ms_push_constants_no_scratch.visible_chunks_array = visible_chunks_array_gpu->device_address();
+                    ms_push_constants_no_scratch.debug = debug_mode;
+
+                    context.frame().withRenderTargets(cmdbuf, { &image }, &*depthBuffer, [&]() {
+                        vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders->graphics_pipeline->pipeline());
+                        vkCmdPushConstants(cmdbuf, shaders->graphics_pipeline->layout(), VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(ms_push_constants_no_scratch), &ms_push_constants_no_scratch);
+
+                        device.dispatch.cmdDrawMeshTasksEXT(cmdbuf, visible_chunks_array_size, 1, visible_chunks_array_size);
+                    });
+
+                    cmdbuf.addCleanupAction([=, visible_chunks_array_gpu = visible_chunks_array_gpu]() {
+
+                    });
+                    break;
+                }
+                case GPU_MESHLETS: {
+                    int visible_chunks_array_size = radius * 2 + 1;
+                    std::vector<std::array<uint64_t, CUNK_CHUNK_SECTIONS_COUNT>> visible_chunks;
+                    visible_chunks.resize(visible_chunks_array_size * visible_chunks_array_size);
+                    memset(visible_chunks.data(), 0, sizeof(uint64_t) * CUNK_CHUNK_SECTIONS_COUNT * visible_chunks.size());
+
+                    for (auto chunk : world.loaded_chunks()) {
+                        if (abs(chunk->cx - player_chunk_x) > radius || abs(chunk->cz - player_chunk_z) > radius) {
+                            world.unload_chunk(chunk.get());
+                            continue;
+                        }
+
+                        unsigned visible_chunks_array_coord_x = (chunk->cx - player_chunk_x) + radius;
+                        unsigned visible_chunks_array_coord_z = (chunk->cz - player_chunk_z) + radius;
+                        assert(visible_chunks_array_coord_x < visible_chunks_array_size);
+                        assert(visible_chunks_array_coord_z < visible_chunks_array_size);
+                        auto& visible_chunks_array_cell = visible_chunks[visible_chunks_array_coord_x * visible_chunks_array_size + visible_chunks_array_coord_z];
+
+                        auto data_lock = chunk->gpu_data.lock_mut();
+                        auto& data_container = *data_lock;
+                        if (!data_container.data) {
+                            if (data_container.task_spawned)
+                                continue;
+
+                            data_container.task_spawned = true;
+                            tp.schedule([&device, chunk]() {
+                               auto data = std::make_shared<ChunkVoxelData>(device, chunk);
+                               auto data_lock = chunk->gpu_data.lock_mut();
+                               data_lock->data = data;
+                               data_lock->task_spawned = false;
+                            });
+                            continue;
+                        }
+                        auto data = data_container.data;
+
+                        for (int section = 0; section < CUNK_CHUNK_SECTIONS_COUNT; section++) {
+                            if (!data->buf[section]) {
+                                visible_chunks_array_cell[section] = 0;
+                                continue;
+                            }
+
+                            visible_chunks_array_cell[section] = data->buf[section]->device_address();
+                        }
+
+                        cmdbuf.addCleanupAction([=, data = data]() {
+
+                        });
+                    }
+
+                    auto visible_chunks_array_gpu = std::make_shared<imr::Buffer>(device, sizeof(uint64_t) * CUNK_CHUNK_SECTIONS_COUNT * visible_chunks_array_size * visible_chunks_array_size,
+                                                                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+                    visible_chunks_array_gpu->uploadDataSync(0, sizeof(uint64_t) * CUNK_CHUNK_SECTIONS_COUNT * visible_chunks_array_size * visible_chunks_array_size, visible_chunks.data());
+                    ms_push_constants.camera_chunk_pos = { player_chunk_x, 0 /* the visible chunks array is always offset at Y=0 player_chunk_y*/, player_chunk_z };
+                    ms_push_constants.visible_chunks_radius = radius;
+                    ms_push_constants.visible_chunks_array = visible_chunks_array_gpu->device_address();
+                    ms_push_constants.debug = debug_mode;
+
+                    size_t required_scratch_buffer_size = 135264 * visible_chunks_array_size * visible_chunks_array_size;
+                    if (!scratchBuffer || scratchBuffer->size != required_scratch_buffer_size) {
+                        if (scratchBuffer) {
+                            // hold onto it till the frame is done
+                            cmdbuf.addCleanupAction([=, scratchBuffer = scratchBuffer]() {});
+                            scratchBuffer = nullptr;
+                        }
+                        scratchBuffer = std::make_shared<imr::Buffer>(device, required_scratch_buffer_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+                        meshlets_baked = false;
+                    }
+                    ms_push_constants.scratch_buffer = scratchBuffer->device_address();
+
+                    if (!cache_meshlets || !meshlets_baked) {
+                        vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_COMPUTE, shaders->compute_pipeline->pipeline());
+                        vkCmdPushConstants(cmdbuf, shaders->compute_pipeline->layout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(ms_push_constants), &ms_push_constants);
+                        vkCmdDispatch(cmdbuf, visible_chunks_array_size, CUNK_CHUNK_SECTIONS_COUNT, visible_chunks_array_size);
+                        device.dispatch.cmdPipelineBarrier2(cmdbuf, tmpPtr<VkDependencyInfo>({
+                            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                            .memoryBarrierCount = 1,
+                            .pMemoryBarriers = tmpPtr<VkMemoryBarrier2>({
+                                .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                                .srcStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+                                .dstStageMask = VK_PIPELINE_STAGE_TASK_SHADER_BIT_EXT | VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT,
+                                .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+                            }),
+                        }));
+                    }
+                    meshlets_baked = true;
+
+                    context.frame().withRenderTargets(cmdbuf, { &image }, &*depthBuffer, [&]() {
+                        vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders->graphics_pipeline->pipeline());
+                        vkCmdPushConstants(cmdbuf, shaders->graphics_pipeline->layout(), VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(ms_push_constants), &ms_push_constants);
+
+                        device.dispatch.cmdDrawMeshTasksEXT(cmdbuf, visible_chunks_array_size, CUNK_CHUNK_SECTIONS_COUNT, visible_chunks_array_size);
+                    });
+
+                    cmdbuf.addCleanupAction([=, visible_chunks_array_gpu = visible_chunks_array_gpu]() {
+
+                    });
+                    break;
+                }
+                case CPU_MESH: {
+                    vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders->graphics_pipeline->pipeline());
+                    context.frame().withRenderTargets(cmdbuf, { &image }, &*depthBuffer, [&]() {
+                        for (auto chunk : world.loaded_chunks()) {
+                            if (abs(chunk->cx - player_chunk_x) > radius || abs(chunk->cz - player_chunk_z) > radius) {
+                                world.unload_chunk(chunk.get());
+                                continue;
+                            }
+
+                            auto mesh_lock = chunk->mesh.lock_mut();
+                            auto& mesh_container = *mesh_lock;
+                            if (!mesh_container.mesh) {
+                                if (mesh_container.task_spawned)
+                                    continue;
+
+                                bool all_neighbours_loaded = true;
+                                ChunkNeighbors n = {};
+                                for (int dx = -1; dx < 2; dx++) {
+                                    for (int dz = -1; dz < 2; dz++) {
+                                        int nx = chunk->cx + dx;
+                                        int nz = chunk->cz + dz;
+
+                                        auto neighborChunk = world.get_loaded_chunk(nx, nz);
+                                        if (neighborChunk)
+                                            n.neighbours[dx + 1][dz + 1] = neighborChunk;
+                                        else
+                                            all_neighbours_loaded = false;
+                                    }
+                                }
+                                if (all_neighbours_loaded) {
+                                    mesh_container.task_spawned = true;
+                                    tp.schedule([n,&device,chunk = chunk]() {
+                                        auto nn = n;
+                                        auto mesh = std::make_shared<ChunkMesh>(device, nn);
+                                        auto mesh_lock = chunk->mesh.lock_mut();
+                                        mesh_lock->mesh = mesh;
+                                        mesh_lock->task_spawned = false;
+                                    });
+                                }
+                                continue;
+                            }
+                            auto mesh = mesh_container.mesh;
+                            if (mesh->num_verts == 0)
+                                continue;
+
+                            vs_push_constants.camera_chunk_pos = { chunk->cx, 0, chunk->cz };
+                            vs_push_constants.face_data = mesh->faces->device_address();
+                            vkCmdPushConstants(cmdbuf, shaders->graphics_pipeline->layout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(vs_push_constants), &vs_push_constants);
+                            vkCmdBindIndexBuffer(cmdbuf, mesh->indices->handle, 0, VK_INDEX_TYPE_UINT32);
+                            //VkBuffer vb = mesh->vertices->handle;
+                            //VkDeviceSize offset = 0;
+                            //vkCmdBindVertexBuffers(cmdbuf, 0, 1, &vb, &offset);
+                            device.dispatch.cmdDrawIndexed(cmdbuf, mesh->num_verts, 1, 0, 0, 0);
+
+                            cmdbuf.addCleanupAction([=, mesh = mesh]() {
+
+                            });
+                        }
+                    });
+                }
+                break;
             }
 
             auto now = imr_get_time_nano();

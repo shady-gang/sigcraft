@@ -1,0 +1,89 @@
+#version 450
+#extension GL_EXT_mesh_shader : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_vote : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_EXT_maximal_reconvergence : enable
+#extension GL_EXT_debug_printf : enable
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+struct MeshletPayload {
+    uint16_t num_verts;
+    uint16_t num_faces;
+};
+
+struct Meshlets {
+    uint32_t num_meshlets;
+    uint32_t offsets[1];
+};
+
+layout(scalar, buffer_reference) buffer MeshletsRef {
+    Meshlets ref;
+};
+
+layout(scalar, buffer_reference) buffer VisibleChunksArrayRef {
+    MeshletsRef array[];
+};
+
+#define CUNK_CHUNK_SIZE 16
+
+layout(scalar, push_constant) uniform T {
+    mat4 matrix;
+    float time;
+    ivec3 camera_chunk_pos;
+    int debug;
+    int visible_chunk_radius;
+    VisibleChunksArrayRef visible_chunks;
+} push_constants;
+
+struct Payload {
+    ivec3 chunk_position;
+    uint64_t tmp;
+};
+
+taskPayloadSharedEXT Payload ts_out;
+
+int encode_neighboring_chunk_idx(int dx, int dy, int dz) {
+    return ((dx + 1) * 3 + (dy + 1)) * 3 + (dz + 1);
+}
+
+void decode_neighboring_chunk_idx(int idx, out int dx, out int dy, out int dz) {
+    dz = (idx % 3) - 1;
+    dy = ((idx / 3) % 3) - 1;
+    dx = ((idx / 3) / 3) - 1;
+}
+
+void main() {
+    uvec3 relative_chunk_id = gl_WorkGroupID;
+
+    int visible_chunks_array_size = push_constants.visible_chunk_radius * 2 + 1;
+    uint visible_chunks_array_idx = relative_chunk_id.x * visible_chunks_array_size + relative_chunk_id.z;
+
+    ivec3 visual_chunk_offset = ivec3(int(relative_chunk_id.x) - push_constants.visible_chunk_radius, 0, int(relative_chunk_id.z) - push_constants.visible_chunk_radius);
+    ivec3 chunk_position = push_constants.camera_chunk_pos;
+    chunk_position.y = 0;
+    chunk_position += visual_chunk_offset;
+
+    MeshletsRef tmp = MeshletsRef(uint64_t(push_constants.visible_chunks.array[visible_chunks_array_idx]));
+
+    ts_out.chunk_position = chunk_position * 16;
+    ts_out.tmp = uint64_t(tmp);
+    //debugPrintfEXT("hi %lx\n", uint64_t(tmp));
+
+    if (uint64_t(tmp) != 0) {
+        //debugPrintfEXT("%d %d %d meshlets %d\n", chunk_position.x, chunk_position.y, chunk_position.z, tmp.ref.num_meshlets);
+        EmitMeshTasksEXT(1 * tmp.ref.num_meshlets, 1, 1);
+    } else {
+        EmitMeshTasksEXT(0, 1, 1);
+    }
+
+}

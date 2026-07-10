@@ -294,8 +294,8 @@ void main() {
                     }
                 }
 
-                //uint base_primitive_idx = (gl_WorkGroupID.x << 20) | ((block_pos.x | (block_pos.z << 4) | (block_pos.y << 8)) << 3);
-                uint base_primitive_idx = ((start >> 5) << 20) | ((block_pos.x | (block_pos.z << 4) | (block_pos.y << 8)) << 3);
+                uint base_primitive_idx = (gl_WorkGroupID.x << 20) | ((block_pos.x | (block_pos.z << 4) | (block_pos.y << 8)) << 3);
+                //uint base_primitive_idx = ((start >> 5) << 20) | ((block_pos.x | (block_pos.z << 4) | (block_pos.y << 8)) << 3);
 
                 if (push_constants.debug == 1) {
                     base_primitive_idx = (end - start) << 3;

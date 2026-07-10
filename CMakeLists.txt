@@ -33,3 +33,10 @@ add_dependencies(sigcraft voxel_task_spv)
 
 add_custom_target(voxel_comp_spv COMMAND ${GLSLANG_EXE} -g -gV -V -S comp ${CMAKE_CURRENT_SOURCE_DIR}/shaders/voxel.comp -o ${CMAKE_CURRENT_BINARY_DIR}/voxel.comp.spv --target-env spirv1.6 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/limits.conf)
 add_dependencies(sigcraft voxel_comp_spv)
+
+add_custom_target(meshlet_frag_spv COMMAND ${GLSLANG_EXE} -g -gV -V -S frag ${CMAKE_CURRENT_SOURCE_DIR}/shaders/meshlet.frag -o ${CMAKE_CURRENT_BINARY_DIR}/meshlet.frag.spv --target-env spirv1.6 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/limits.conf)
+add_dependencies(sigcraft meshlet_frag_spv)
+add_custom_target(meshlet_mesh_spv COMMAND ${GLSLANG_EXE} -g -gV -V -S mesh ${CMAKE_CURRENT_SOURCE_DIR}/shaders/meshlet.mesh -o ${CMAKE_CURRENT_BINARY_DIR}/meshlet.mesh.spv --target-env spirv1.6 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/limits.conf)
+add_dependencies(sigcraft meshlet_mesh_spv)
+add_custom_target(meshlet_task_spv COMMAND ${GLSLANG_EXE} -g -gV -V -S task ${CMAKE_CURRENT_SOURCE_DIR}/shaders/meshlet.task -o ${CMAKE_CURRENT_BINARY_DIR}/meshlet.task.spv --target-env spirv1.6 ${CMAKE_CURRENT_SOURCE_DIR}/shaders/limits.conf)
+add_dependencies(sigcraft meshlet_task_spv)

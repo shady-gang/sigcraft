@@ -1,0 +1,137 @@
+#version 450
+#extension GL_EXT_mesh_shader : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_vote : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_EXT_maximal_reconvergence : enable
+#extension GL_EXT_debug_printf : enable
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+#define MAX_VERTS 128
+#define MAX_PRIMS 256
+
+layout(triangles, max_vertices = MAX_VERTS, max_primitives = MAX_PRIMS) out;
+
+struct Meshlet {
+    uint16_t num_verts;
+    uint16_t num_faces;
+};
+
+layout(scalar, buffer_reference) buffer MeshletRef {
+    Meshlet ref;
+};
+
+layout(scalar, buffer_reference) buffer U32ArrayRef {
+    uint32_t ref[];
+};
+
+layout(scalar, buffer_reference) buffer U8ArrayRef {
+    uint8_t ref[];
+};
+
+struct Meshlets {
+    uint32_t num_meshlets;
+    uint32_t offsets[1];
+};
+
+layout(scalar, buffer_reference) buffer MeshletsRef {
+    Meshlets ref;
+};
+
+layout(scalar, push_constant) uniform T {
+    mat4 matrix;
+    float time;
+    ivec3 camera_chunk_pos;
+    int debug;
+    int visible_chunk_radius;
+    uint64_t visible_chunks;
+} push_constants;
+
+struct Payload {
+    ivec3 chunk_position;
+    uint64_t tmp;
+};
+
+taskPayloadSharedEXT Payload ts_in;
+
+perprimitiveEXT out gl_MeshPerPrimitiveEXT {
+    int gl_PrimitiveID;
+    //int gl_Layer;
+} gl_MeshPrimitivesEXT[];
+
+// layout(location = 0)
+// perprimitiveEXT out vec3 colorOut[];
+//
+// layout(location = 1)
+// perprimitiveEXT out vec3 normalOut[];
+
+#define CUNK_CHUNK_MAX_HEIGHT 384
+#define CUNK_CHUNK_SIZE 16
+
+vec3 lod2color(int lod) {
+    if (lod == 4)
+        return vec3(0.0, 0.0, 1.0);
+    if (lod == 3)
+        return vec3(0.0, 1.0, 1.0);
+    if (lod == 2)
+        return vec3(1.0, 1.0, 0.0);
+    if (lod == 1)
+        return vec3(1.0, 0.75, 0.0);
+    return vec3(1.0, 0.0, 0.0);
+}
+
+vec3 heatmap(float lod) {
+    if (lod < 2)
+        return vec3(0.0, 0.0, 1.0);
+    if (lod < 4)
+        return vec3(0.0, 1.0, 1.0);
+    if (lod < 8)
+        return vec3(1.0, 1.0, 0.0);
+    if (lod < 16)
+        return vec3(1.0, 0.75, 0.0);
+    return vec3(1.0, 0.0, 0.0);
+}
+
+uvec3 unpack_vertex_position(uint idx) {
+    return uvec3(idx & 0x1Fu, (idx >> 10u), (idx >> 5u) & 0x1Fu);
+}
+
+void main() {
+    MeshletsRef meshlets = MeshletsRef(ts_in.tmp);
+
+    MeshletRef meshlet = MeshletRef(uint64_t(ts_in.tmp) + uint64_t(meshlets.ref.offsets[gl_WorkGroupID.x]));
+    SetMeshOutputsEXT(meshlet.ref.num_verts, meshlet.ref.num_faces * 2);
+    //SetMeshOutputsEXT(0, 0);
+
+    //debugPrintfEXT("hi %lx %d\n", uint64_t(ts_in.tmp), meshlets.ref.offsets[gl_WorkGroupID.x]);
+
+    uint lid = gl_LocalInvocationID.x;
+    U32ArrayRef vertex_buffer = U32ArrayRef(uint64_t(meshlet) + 2 * 2);
+    if (lid < meshlet.ref.num_verts) {
+        uvec3 vertex = unpack_vertex_position(vertex_buffer.ref[lid]);
+        gl_MeshVerticesEXT[lid].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) + vertex, 1.0);
+    }
+
+    U8ArrayRef index_buffer = U8ArrayRef(uint64_t(meshlet) + 2 * 2 + 4 * uint64_t(meshlet.ref.num_verts));
+    if (lid < meshlet.ref.num_faces) {
+        uint v0 = uint(index_buffer.ref[lid * 8 + 0]);
+        uint v1 = uint(index_buffer.ref[lid * 8 + 1]);
+        uint v2 = uint(index_buffer.ref[lid * 8 + 2]);
+        uint v3 = uint(index_buffer.ref[lid * 8 + 3]);
+
+        uint face = uint(index_buffer.ref[lid * 8 + 7]);
+        uint base_primitive_idx = gl_WorkGroupID.x << 20;
+        gl_MeshPrimitivesEXT[lid * 2 + 0].gl_PrimitiveID = int(base_primitive_idx | face);
+        gl_MeshPrimitivesEXT[lid * 2 + 1].gl_PrimitiveID = int(base_primitive_idx | face);
+        gl_PrimitiveTriangleIndicesEXT[lid * 2 + 0] = uvec3(v0, v2, v3);
+        gl_PrimitiveTriangleIndicesEXT[lid * 2 + 1] = uvec3(v0, v3, v1);
+    }
+}
