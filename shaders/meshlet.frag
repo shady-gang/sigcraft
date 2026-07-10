@@ -32,6 +32,8 @@ layout(scalar, push_constant) uniform T {
     mat4 matrix;
     float time;
     ivec3 camera_chunk_pos;
+    vec3 camera_pos;
+    vec3 camera_dir;
     int debug;
     int visible_chunk_radius;
     uint64_t visible_chunks;
@@ -97,7 +99,7 @@ void main() {
     vec3 color = vec3(fract(0.2 + meshlet_idx * 0.5231), fract(meshlet_idx * 0.252102), fract(meshlet_idx * 0.333));
 
     if (push_constants.debug == 1) {
-        color = heatmap((gl_PrimitiveID >> 3) / 32.0);
+        color = heatmap((gl_PrimitiveID >> 3) / 16.0);
     }
 
     if (push_constants.debug == 2 || push_constants.debug == 3) {

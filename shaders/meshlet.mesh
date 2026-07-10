@@ -23,6 +23,7 @@ layout(triangles, max_vertices = MAX_VERTS, max_primitives = MAX_PRIMS) out;
 struct Meshlet {
     uint16_t num_verts;
     uint16_t num_faces;
+    uint16_t face;
 };
 
 layout(scalar, buffer_reference) buffer MeshletRef {
@@ -50,6 +51,8 @@ layout(scalar, push_constant) uniform T {
     mat4 matrix;
     float time;
     ivec3 camera_chunk_pos;
+    vec3 camera_pos;
+    vec3 camera_dir;
     int debug;
     int visible_chunk_radius;
     uint64_t visible_chunks;
@@ -58,6 +61,8 @@ layout(scalar, push_constant) uniform T {
 struct Payload {
     ivec3 chunk_position;
     uint64_t tmp;
+    uint32_t visible_meshlets_count;
+    uint32_t masks[10];
 };
 
 taskPayloadSharedEXT Payload ts_in;
@@ -107,20 +112,64 @@ uvec3 unpack_vertex_position(uint idx) {
 void main() {
     MeshletsRef meshlets = MeshletsRef(ts_in.tmp);
 
-    MeshletRef meshlet = MeshletRef(uint64_t(ts_in.tmp) + uint64_t(meshlets.ref.offsets[gl_WorkGroupID.x]));
+    uint meshlet_idx = 0;
+    uint consumed_bits = 0;
+
+    uint target = gl_WorkGroupID.x + 1;
+
+    for (uint i = 0; i < 10; i++) {
+        uint count = bitCount(ts_in.masks[i]);
+        if (consumed_bits + count < target) {
+            consumed_bits += count;
+            meshlet_idx += 32;
+            //continue;
+        } else {
+            for (uint bit = 0; bit < 32 && consumed_bits < target; bit++) {
+                if (((ts_in.masks[i] >> bit) & 0x1) != 0)
+                    consumed_bits++;
+                if (consumed_bits == target)
+                    break;
+                meshlet_idx++;
+            }
+            break;
+        }
+    }
+
+    // for (uint bit_idx = 0; bit_idx < meshlets.ref.num_meshlets; bit_idx++) {
+    //     if (((ts_in.masks[(bit_idx >> 5)] >> (bit_idx % 32)) & 0x1) != 0)
+    //         consumed_bits++;
+    //     if (consumed_bits == gl_WorkGroupID.x + 1) {
+    //         break;
+    //     }
+    //     meshlet_idx++;
+    // }
+
+    //meshlet_idx = gl_WorkGroupID.x;
+
+    if (meshlet_idx >= meshlets.ref.num_meshlets) {
+        SetMeshOutputsEXT(0, 0);
+        return;
+    }
+
+    // if (((ts_in.masks[gl_WorkGroupID.x / 32] >> gl_WorkGroupID.x) & 1) == 0u) {
+    //     SetMeshOutputsEXT(0, 0);
+    //     return;
+    // }
+
+    MeshletRef meshlet = MeshletRef(uint64_t(ts_in.tmp) + uint64_t(meshlets.ref.offsets[meshlet_idx]));
     SetMeshOutputsEXT(meshlet.ref.num_verts, meshlet.ref.num_faces * 2);
     //SetMeshOutputsEXT(0, 0);
 
-    //debugPrintfEXT("hi %lx %d\n", uint64_t(ts_in.tmp), meshlets.ref.offsets[gl_WorkGroupID.x]);
+    //debugPrintfEXT("hi %lx %d\n", uint64_t(ts_in.tmp), meshlets.ref.offsets[meshlet_idx]);
 
     uint lid = gl_LocalInvocationID.x;
-    U32ArrayRef vertex_buffer = U32ArrayRef(uint64_t(meshlet) + 2 * 2);
+    U32ArrayRef vertex_buffer = U32ArrayRef(uint64_t(meshlet) + 4 * 2);
     if (lid < meshlet.ref.num_verts) {
         uvec3 vertex = unpack_vertex_position(vertex_buffer.ref[lid]);
         gl_MeshVerticesEXT[lid].gl_Position = push_constants.matrix * vec4(vec3(ts_in.chunk_position) + vertex, 1.0);
     }
 
-    U8ArrayRef index_buffer = U8ArrayRef(uint64_t(meshlet) + 2 * 2 + 4 * uint64_t(meshlet.ref.num_verts));
+    U8ArrayRef index_buffer = U8ArrayRef(uint64_t(meshlet) + 4 * 2 + 4 * uint64_t(meshlet.ref.num_verts));
     if (lid < meshlet.ref.num_faces) {
         uint v0 = uint(index_buffer.ref[lid * 8 + 0]);
         uint v1 = uint(index_buffer.ref[lid * 8 + 1]);
@@ -129,6 +178,15 @@ void main() {
 
         uint face = uint(index_buffer.ref[lid * 8 + 7]);
         uint base_primitive_idx = gl_WorkGroupID.x << 20;
+        if (push_constants.debug == 1) {
+            base_primitive_idx = (ts_in.visible_meshlets_count) << 3;
+        }
+        if (push_constants.debug == 2) {
+            base_primitive_idx = (meshlet.ref.num_faces) << 3;
+        }
+        if (push_constants.debug == 3) {
+            base_primitive_idx = (meshlet.ref.num_verts) << 3;
+        }
         gl_MeshPrimitivesEXT[lid * 2 + 0].gl_PrimitiveID = int(base_primitive_idx | face);
         gl_MeshPrimitivesEXT[lid * 2 + 1].gl_PrimitiveID = int(base_primitive_idx | face);
         gl_PrimitiveTriangleIndicesEXT[lid * 2 + 0] = uvec3(v0, v2, v3);

@@ -29,10 +29,12 @@ struct {
     mat4 matrix;
     float time;
     ivec3 camera_chunk_pos;
+    vec3 camera_pos;
+    vec3 camera_dir;
     int debug;
     int visible_chunks_radius;
     uint64_t visible_chunks_array;
-} ms_push_constants_no_scratch;
+} cpu_ms_push_constants;
 
 struct {
     mat4 matrix;
@@ -334,7 +336,6 @@ int main(int argc, char** argv) {
 
             ms_push_constants.matrix = m;
             vs_push_constants.matrix = m;
-            ms_push_constants_no_scratch.matrix = m;
 
             auto load_chunk = [&](int cx, int cz) {
                 auto loaded = world.get_loaded_chunk(cx, cz);
@@ -417,14 +418,17 @@ int main(int argc, char** argv) {
                     auto visible_chunks_array_gpu = std::make_shared<imr::Buffer>(device, sizeof(uint64_t) * visible_chunks_array_size * visible_chunks_array_size,
                                                                                   VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
                     visible_chunks_array_gpu->uploadDataSync(0, sizeof(uint64_t) * visible_chunks_array_size * visible_chunks_array_size, visible_chunks.data());
-                    ms_push_constants_no_scratch.camera_chunk_pos = { player_chunk_x, 0 /* the visible chunks array is always offset at Y=0 player_chunk_y*/, player_chunk_z };
-                    ms_push_constants_no_scratch.visible_chunks_radius = radius;
-                    ms_push_constants_no_scratch.visible_chunks_array = visible_chunks_array_gpu->device_address();
-                    ms_push_constants_no_scratch.debug = debug_mode;
+                    cpu_ms_push_constants.camera_chunk_pos = { player_chunk_x, 0 /* the visible chunks array is always offset at Y=0 player_chunk_y*/, player_chunk_z };
+                    cpu_ms_push_constants.visible_chunks_radius = radius;
+                    cpu_ms_push_constants.visible_chunks_array = visible_chunks_array_gpu->device_address();
+                    cpu_ms_push_constants.debug = debug_mode;
+                    cpu_ms_push_constants.matrix = m;
+                    cpu_ms_push_constants.camera_pos = camera.position;
+                    cpu_ms_push_constants.camera_dir = camera_get_forward_vec(&camera);
 
                     context.frame().withRenderTargets(cmdbuf, { &image }, &*depthBuffer, [&]() {
                         vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders->graphics_pipeline->pipeline());
-                        vkCmdPushConstants(cmdbuf, shaders->graphics_pipeline->layout(), VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(ms_push_constants_no_scratch), &ms_push_constants_no_scratch);
+                        vkCmdPushConstants(cmdbuf, shaders->graphics_pipeline->layout(), VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(cpu_ms_push_constants), &cpu_ms_push_constants);
 
                         device.dispatch.cmdDrawMeshTasksEXT(cmdbuf, visible_chunks_array_size, 1, visible_chunks_array_size);
                     });

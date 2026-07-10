@@ -16,9 +16,14 @@
 
 layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
-struct MeshletPayload {
+struct Meshlet {
     uint16_t num_verts;
     uint16_t num_faces;
+    uint16_t face;
+};
+
+layout(scalar, buffer_reference) buffer MeshletRef {
+    Meshlet ref;
 };
 
 struct Meshlets {
@@ -40,6 +45,8 @@ layout(scalar, push_constant) uniform T {
     mat4 matrix;
     float time;
     ivec3 camera_chunk_pos;
+    vec3 camera_pos;
+    vec3 camera_dir;
     int debug;
     int visible_chunk_radius;
     VisibleChunksArrayRef visible_chunks;
@@ -48,6 +55,8 @@ layout(scalar, push_constant) uniform T {
 struct Payload {
     ivec3 chunk_position;
     uint64_t tmp;
+    uint32_t visible_meshlets_count;
+    uint32_t masks[10];
 };
 
 taskPayloadSharedEXT Payload ts_out;
@@ -73,15 +82,29 @@ void main() {
     chunk_position.y = 0;
     chunk_position += visual_chunk_offset;
 
-    MeshletsRef tmp = MeshletsRef(uint64_t(push_constants.visible_chunks.array[visible_chunks_array_idx]));
+    MeshletsRef meshlets = MeshletsRef(uint64_t(push_constants.visible_chunks.array[visible_chunks_array_idx]));
+    if (uint64_t(meshlets) != 0) {
+        ts_out.chunk_position = chunk_position * 16;
+        ts_out.tmp = uint64_t(meshlets);
 
-    ts_out.chunk_position = chunk_position * 16;
-    ts_out.tmp = uint64_t(tmp);
-    //debugPrintfEXT("hi %lx\n", uint64_t(tmp));
+        uint visible_meshlets_count = 0;
+        for (int i = 0; i < 10; i++) {
+            // ts_out.masks[i] = 0;
+            uint meshlet_idx = i * 32 + gl_SubgroupInvocationID;
+            bool visible = false;
+            if (meshlet_idx < meshlets.ref.num_meshlets) {
+                visible = true;
+                MeshletRef meshlet = MeshletRef(uint64_t(meshlets) + uint64_t(meshlets.ref.offsets[meshlet_idx]));
+                //visible = meshlet.ref.face != 0;
+            }
+            uint mask = subgroupBallot(visible).x;
+            ts_out.masks[i] = mask;
+            visible_meshlets_count += bitCount(mask);
+        }
 
-    if (uint64_t(tmp) != 0) {
         //debugPrintfEXT("%d %d %d meshlets %d\n", chunk_position.x, chunk_position.y, chunk_position.z, tmp.ref.num_meshlets);
-        EmitMeshTasksEXT(1 * tmp.ref.num_meshlets, 1, 1);
+        ts_out.visible_meshlets_count = visible_meshlets_count;
+        EmitMeshTasksEXT(visible_meshlets_count, 1, 1);
     } else {
         EmitMeshTasksEXT(0, 1, 1);
     }

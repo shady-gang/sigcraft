@@ -271,6 +271,7 @@ struct FormattedBuffer {
 };
 
 struct MeshletBuilder {
+    BlockFace face;
     size_t max_verts = 128, max_faces = 128;
 
     std::vector<uint32_t> vertices;
@@ -320,6 +321,8 @@ struct MeshletBuilder {
 
         output.append<uint16_t>(vertices.size());
         output.append<uint16_t>(faces.size());
+        output.append<uint16_t>((int) face);
+        output.append<uint16_t>(0);
         output.concatenate(vertices);
         output.concatenate(faces);
         return std::move(output.data_);
@@ -342,7 +345,7 @@ ChunkMeshlets::ChunkMeshlets(imr::Device& d, ChunkNeighbors& n) {
         }
     }
 
-    std::vector<MeshletBuilder> meshlets;
+    std::vector<MeshletBuilder> face_meshlets[6];
     std::function<add_face_fn_t> add_face = [&](ivec3 block_position, vec3 color, BlockFace face) {
         uvec3 v0 = uvec3(block_position.x, block_position.y, block_position.z);
         uint axis = blockface2axis(face);
@@ -360,22 +363,23 @@ ChunkMeshlets::ChunkMeshlets(imr::Device& d, ChunkNeighbors& n) {
         if (!positive)
             std::swap(v1, v2);
         std::array<uint32_t, 4> face_arr = { pack_vertex_position(v0), pack_vertex_position(v1), pack_vertex_position(v2), pack_vertex_position(v3) };
-        while (meshlets.empty() || !meshlets.back().add_face(face_arr, color, face)) {
-            meshlets.push_back({});
+        while (face_meshlets[(int)face].empty() || !face_meshlets[(int)face].back().add_face(face_arr, color, face)) {
+            face_meshlets[(int)face].push_back({ face });
         }
     };
     traverse_chunk_mesh(unsafe.neighbours[1][1], unsafe, add_face);
 
-    if (meshlets.empty())
+    std::vector<std::vector<uint8_t>> materialized_meshlets;
+    for (auto& meshlets : face_meshlets)
+        for (auto& meshlet : meshlets) {
+            materialized_meshlets.push_back(meshlet.materialize());
+        }
+
+    if (materialized_meshlets.empty())
         return;
 
-    std::vector<std::vector<uint8_t>> materialized_meshlets;
-    for (auto& meshlet : meshlets) {
-        materialized_meshlets.push_back(meshlet.materialize());
-    }
-
     FormattedBuffer output;
-    output.append<uint32_t>(meshlets.size());
+    output.append<uint32_t>(materialized_meshlets.size());
     size_t offset = output.data_.size() + materialized_meshlets.size() * sizeof(uint32_t);
     for (auto& mat : materialized_meshlets) {
         output.append<uint32_t>(offset);
