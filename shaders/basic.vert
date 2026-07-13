@@ -20,17 +20,29 @@
 // layout(location = 1)
 // out vec3 normal;
 
+layout(scalar, buffer_reference) buffer VertexPosRef {
+    uint ref[];
+};
+
 layout(scalar, push_constant) uniform T {
     mat4 matrix;
     ivec3 chunk_position;
     float time;
+    int debug;
+    VertexPosRef vertex_positions;
     uint64_t paddd;
 } push_constants;
 
 void main() {
     mat4 matrix = push_constants.matrix;
     uint vertex_idx = uint(gl_VertexIndex);
-    uvec3 vertex = uvec3(vertex_idx & 0x1Fu, (vertex_idx >> 10), (vertex_idx >> 5) & 0x1Fu);
+    uint vertex_pos;
+    if (push_constants.debug == 1) {
+        vertex_pos = vertex_idx;
+    } else {
+        vertex_pos = push_constants.vertex_positions.ref[vertex_idx];
+    }
+    uvec3 vertex = uvec3(vertex_pos & 0x1Fu, (vertex_pos >> 10), (vertex_pos >> 5) & 0x1Fu);
     gl_Position = matrix * vec4(vec3(ivec3(vertex) + push_constants.chunk_position * 16), 1.0);
     // int primid = gl_VertexIndex / 6;
     // color = colorIn;

@@ -20,6 +20,8 @@ struct Meshlet {
     uint16_t num_verts;
     uint16_t num_faces;
     uint16_t face;
+    uint16_t padding;
+    ivec3 min, max;
 };
 
 layout(scalar, buffer_reference) buffer MeshletRef {
@@ -41,12 +43,22 @@ layout(scalar, buffer_reference) buffer VisibleChunksArrayRef {
 
 #define CUNK_CHUNK_SIZE 16
 
+struct Plane {
+    vec3 normal;
+    float distance;
+};
+
+struct Frustum {
+    Plane planes[6];
+};
+
 layout(scalar, push_constant) uniform T {
     mat4 matrix;
-    float time;
+    Frustum frustum;
     ivec3 camera_chunk_pos;
     vec3 camera_pos;
     vec3 camera_dir;
+    float time;
     int debug;
     int visible_chunk_radius;
     VisibleChunksArrayRef visible_chunks;
@@ -71,6 +83,39 @@ void decode_neighboring_chunk_idx(int idx, out int dx, out int dy, out int dz) {
     dx = ((idx / 3) / 3) - 1;
 }
 
+ivec3 face2normal(uint face) {
+    switch (face) {
+        case 0: return ivec3(0, 1, 0);
+        case 1: return ivec3(0, -1, 0);
+        case 2: return ivec3(0, 0, 1);
+        case 3: return ivec3(0, 0, -1);
+        case 4: return ivec3(1, 0, 0);
+        case 5: return ivec3(-1, 0, 0);
+    }
+    return ivec3(0);
+}
+
+float distance_to_point(Plane plane, vec3 point) {
+    return dot(point, plane.normal) + plane.distance;
+}
+
+bool isAABBInsideFrustum(Frustum frustum, vec3 min, vec3 max) {
+    for (int i = 0; i < 6; ++i) {
+        // Calculate the positive vertex of the AABB along the plane's normal (Projection)
+        vec3 farthestPoint = vec3(
+            mix(max.x, min.x, frustum.planes[i].normal.x < 0),
+            mix(max.y, min.y, frustum.planes[i].normal.y < 0),
+            mix(max.z, min.z, frustum.planes[i].normal.z < 0)
+        );
+
+        // If the farthest point is strictly behind the plane, it's outside the frustum
+        if (distance_to_point(frustum.planes[i], farthestPoint) < 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void main() {
     uvec3 relative_chunk_id = gl_WorkGroupID;
 
@@ -82,6 +127,13 @@ void main() {
     chunk_position.y = 0;
     chunk_position += visual_chunk_offset;
 
+    vec3 cmin = vec3(chunk_position * 16 + vec3(0));
+    vec3 cmax = vec3(chunk_position * 16 + vec3(16, 384, 16));
+    if (!isAABBInsideFrustum(push_constants.frustum, cmin, cmax)) {
+        EmitMeshTasksEXT(0, 1, 1);
+        return;
+    }
+
     MeshletsRef meshlets = MeshletsRef(uint64_t(push_constants.visible_chunks.array[visible_chunks_array_idx]));
     if (uint64_t(meshlets) != 0) {
         ts_out.chunk_position = chunk_position * 16;
@@ -92,14 +144,43 @@ void main() {
             // ts_out.masks[i] = 0;
             uint meshlet_idx = i * 32 + gl_SubgroupInvocationID;
             bool visible = false;
-            if (meshlet_idx < meshlets.ref.num_meshlets) {
-                visible = true;
-                MeshletRef meshlet = MeshletRef(uint64_t(meshlets) + uint64_t(meshlets.ref.offsets[meshlet_idx]));
-                //visible = meshlet.ref.face != 0;
+            if (subgroupAny(meshlet_idx < meshlets.ref.num_meshlets)) {
+                if (meshlet_idx < meshlets.ref.num_meshlets) {
+                    visible = true;
+                    MeshletRef meshlet = MeshletRef(uint64_t(meshlets) + uint64_t(meshlets.ref.offsets[meshlet_idx]));
+                    uint face = meshlet.ref.face;
+                    vec3 normal = vec3(face2normal(face));
+
+                    vec3 min = vec3(ts_out.chunk_position + meshlet.ref.min);
+                    vec3 max = vec3(ts_out.chunk_position + meshlet.ref.max);
+                    visible = isAABBInsideFrustum(push_constants.frustum, min, max);
+                    //visible = dot(-normal, push_constants.camera_dir) > -0.5;
+                    if (face == 0 && min.y > push_constants.camera_pos.y) {
+                        visible = false;
+                    }
+                    if (face == 1 && max.y < push_constants.camera_pos.y) {
+                        visible = false;
+                    }
+                    if (face == 2 && min.z > push_constants.camera_pos.z) {
+                        visible = false;
+                    }
+                    if (face == 3 && max.z < push_constants.camera_pos.z) {
+                        visible = false;
+                    }
+                    if (face == 4 && min.x > push_constants.camera_pos.x) {
+                        visible = false;
+                    }
+                    if (face == 5 && max.x < push_constants.camera_pos.x) {
+                        visible = false;
+                    }
+                    //visible = true;
+                }
+                uint mask = subgroupBallot(visible).x;
+                ts_out.masks[i] = mask;
+                visible_meshlets_count += bitCount(mask);
+            } else {
+                ts_out.masks[i] = 0;
             }
-            uint mask = subgroupBallot(visible).x;
-            ts_out.masks[i] = mask;
-            visible_meshlets_count += bitCount(mask);
         }
 
         //debugPrintfEXT("%d %d %d meshlets %d\n", chunk_position.x, chunk_position.y, chunk_position.z, tmp.ref.num_meshlets);

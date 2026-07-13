@@ -8,8 +8,9 @@
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_buffer_reference : require
 
-// layout(location = 0)
-// perprimitiveEXT in vec3 color;
+layout(location = 0)
+perprimitiveEXT in vec3 colorIn;
+
 //
 // layout(location = 1)
 // perprimitiveEXT in vec3 normal;
@@ -28,12 +29,22 @@ layout(scalar, buffer_reference) buffer MeshletsRef {
     Meshlets ref;
 };
 
+struct Plane {
+    vec3 normal;
+    float distance;
+};
+
+struct Frustum {
+    Plane planes[6];
+};
+
 layout(scalar, push_constant) uniform T {
     mat4 matrix;
-    float time;
+    Frustum frustum;
     ivec3 camera_chunk_pos;
     vec3 camera_pos;
     vec3 camera_dir;
+    float time;
     int debug;
     int visible_chunk_radius;
     uint64_t visible_chunks;
@@ -96,13 +107,17 @@ void main() {
     uint meshlet_idx = gl_PrimitiveID >> 20;
     uint face = gl_PrimitiveID & 0x7;
     vec3 normal = vec3(face2normal(face));
-    vec3 color = vec3(fract(0.2 + meshlet_idx * 0.5231), fract(meshlet_idx * 0.252102), fract(meshlet_idx * 0.333));
+    vec3 color = colorIn;
 
     if (push_constants.debug == 1) {
+        color = vec3(fract(0.2 + meshlet_idx * 0.5231), fract(meshlet_idx * 0.252102), fract(meshlet_idx * 0.333));
+    }
+
+    if (push_constants.debug == 2) {
         color = heatmap((gl_PrimitiveID >> 3) / 16.0);
     }
 
-    if (push_constants.debug == 2 || push_constants.debug == 3) {
+    if (push_constants.debug == 3 || push_constants.debug == 4) {
         color = heatmap((gl_PrimitiveID >> 3) / 16.0);
     }
 

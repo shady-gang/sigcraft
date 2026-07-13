@@ -215,7 +215,10 @@ void upload(imr::Device& d, std::unique_ptr<imr::Buffer>& dst, const std::vector
 
 ChunkMesh::ChunkMesh(imr::Device& d, ChunkNeighbors& n) {
     std::vector<uint32_t> idx_data;
-    // std::vector<Vertex> vertex_data;
+    std::vector<uint32_t> vertex_positions;
+    std::vector<uint32_t> vertex_data;
+    //std::vector<Vertex> vertex_data;
+    std::unordered_map<uint32_t, uint32_t> vertices_map;
     std::vector<Face> face_data;
 
     ChunkNeighborsUnsafe unsafe {};
@@ -230,8 +233,20 @@ ChunkMesh::ChunkMesh(imr::Device& d, ChunkNeighbors& n) {
         std::function<add_vertex_fn_t> add_vertex = [&](ivec3 position, vec2 uv){
             //vertex_data.push_back(encode_vertex(block_position + position, uv, face2normal(face), color));
             ivec3 p = block_position + position;
+            if (p.y > height)
+                height = p.y;
             assert(p.x >= 0);
-            idx_data.push_back((p.x) | (p.z << 5) | (p.y << 10));
+            uint32_t vertex_pos = (p.x) | (p.z << 5) | (p.y << 10);
+            auto found = vertices_map.find(vertex_pos);
+            if (found != vertices_map.end()) {
+                idx_data.push_back(found->second);
+            } else {
+                uint32_t idx = vertex_positions.size();
+                vertices_map[vertex_pos] = idx;
+                vertex_positions.push_back(vertex_pos);
+                idx_data.push_back(idx);
+            }
+            vertex_data.push_back(vertex_pos);
             num_verts += 1;
         };
         generate_face_vertices[(int)face](add_vertex);
@@ -247,6 +262,8 @@ ChunkMesh::ChunkMesh(imr::Device& d, ChunkNeighbors& n) {
         // upload(d, vertices, vertex_data, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         upload(d, indices, idx_data, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
         upload(d, faces, face_data, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        upload(d, vertices, vertex_positions, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        upload(d, vertices_as_indices, vertex_data, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
     }
 }
 
@@ -270,14 +287,24 @@ struct FormattedBuffer {
     }
 };
 
+uint32_t pack_vertex_position(uvec3 v) {
+    return uint32_t(v.y << 10) | (v.z << 5) | (v.x);
+}
+
+uvec3 unpack_vertex_position(uint idx) {
+    return uvec3(idx & 0x1F, (idx >> 10), (idx >> 5) & 0x1F);
+}
+
 struct MeshletBuilder {
     BlockFace face;
-    size_t max_verts = 128, max_faces = 128;
+    size_t max_verts = 64, max_faces = 126;
 
     std::vector<uint32_t> vertices;
     std::unordered_map<uint32_t, uint8_t> vertices_map;
 
     std::vector<ChunkMeshlets::Face> faces;
+
+    ivec3 min = ivec3(16, 384, 16), max = ivec3(0);
 
     bool add_face(std::array<uint32_t, 4> face_vertices, vec3 color, BlockFace f) {
         if (faces.size() +1  > max_faces)
@@ -304,6 +331,22 @@ struct MeshletBuilder {
                 vertices.push_back(face_vertices[i]);
                 vertices_map[face_vertices[i]] = idx[i];
             }
+
+            uvec3 vp = unpack_vertex_position(face_vertices[i]);
+            //printf("vp %d %d %d", (int) vp.x, (int) vp.y, (int) vp.z);
+            ivec3 vpi = ivec3(vp.x, vp.y, vp.z);
+            if (vpi.x < min.x)
+                min.x = (int) vpi.x;
+            if (vpi.x > max.x)
+                max.x = (int) vpi.x;
+            if (vpi.y < min.y)
+                min.y = (int) vpi.y;
+            if (vpi.y > max.y)
+                max.y = (int) vpi.y;
+            if (vpi.z < min.z)
+                min.z = (int) vpi.z;
+            if (vpi.z > max.z)
+                max.z = (int) vpi.z;
         }
         std::array<uint8_t, 4> color_and_face;
         color_and_face[0] = color.x * 255;
@@ -313,6 +356,8 @@ struct MeshletBuilder {
         faces.push_back(ChunkMeshlets::Face(idx, color_and_face));
         assert(vertices.size() <= max_verts);
         assert(faces.size() <= max_faces);
+        //printf("min %d %d %d\n", (int) min.x, (int) min.y, (int) min.z);
+        //printf("max %d %d %d\n", (int) max.x, (int) max.y, (int) max.z);
         return true;
     }
 
@@ -323,19 +368,15 @@ struct MeshletBuilder {
         output.append<uint16_t>(faces.size());
         output.append<uint16_t>((int) face);
         output.append<uint16_t>(0);
+        output.append<ivec3>(min);
+        output.append<ivec3>(max);
+        //printf("min %d %d %d\n", (int) min.x, (int) min.y, (int) min.z);
+        //printf("max %d %d %d\n", (int) max.x, (int) max.y, (int) max.z);
         output.concatenate(vertices);
         output.concatenate(faces);
         return std::move(output.data_);
     }
 };
-
-uint32_t pack_vertex_position(uvec3 v) {
-    return uint32_t(v.y << 10) | (v.z << 5) | (v.x);
-}
-
-uvec3 unpack_vertex_position(uint idx) {
-    return uvec3(idx & 0x1F, (idx >> 10), (idx >> 5) & 0x1F);
-}
 
 ChunkMeshlets::ChunkMeshlets(imr::Device& d, ChunkNeighbors& n) {
     ChunkNeighborsUnsafe unsafe {};

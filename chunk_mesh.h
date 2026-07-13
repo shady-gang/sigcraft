@@ -16,10 +16,13 @@ struct ChunkNeighborsUnsafe {
 };
 
 struct ChunkMesh {
+    std::unique_ptr<imr::Buffer> vertices_as_indices;
     std::unique_ptr<imr::Buffer> vertices;
     std::unique_ptr<imr::Buffer> indices;
     std::unique_ptr<imr::Buffer> faces;
     size_t num_verts;
+
+    int height = 0;
 
     ChunkMesh(imr::Device&, ChunkNeighbors& n);
 

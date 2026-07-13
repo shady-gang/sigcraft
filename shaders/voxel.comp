@@ -370,7 +370,7 @@ if (uint64_t(ptr) != 0) {
                         int new_primitives_budget = primitives_budget + subgroupInclusiveAdd(primitives_count);
                         int new_vertices_budget = vertices_budget + subgroupInclusiveAdd(vertices_count);
 
-                        bool over_budget = new_vertices_budget > 256 || new_primitives_budget > 256;// || ((first >= 0) && ((scan_idx + int(gl_SubgroupInvocationID)) - first) > 32);
+                        bool over_budget = new_vertices_budget > 64 || new_primitives_budget > 126;// || ((first >= 0) && ((scan_idx + int(gl_SubgroupInvocationID)) - first) > 32);
                         if (subgroupAny(over_budget)) {
                             // the last scan iteration was under-budget but there's nothing we can add from the new one, complete it
                             if (subgroupAll(over_budget)) {
