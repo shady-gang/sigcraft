@@ -17,8 +17,11 @@ int debug_mode = 0;
 
 struct {
     mat4 matrix;
-    float time;
+    Frustum frustum;
     ivec3 camera_chunk_pos;
+    vec3 camera_pos;
+    vec3 camera_dir;
+    float time;
     int debug;
     int visible_chunks_radius;
     uint64_t visible_chunks_array;
@@ -482,7 +485,7 @@ int main(int argc, char** argv) {
                 }
                 case GPU_MESHLETS: {
                     int visible_chunks_array_size = radius * 2 + 1;
-                    if (gpu_meshlet_renderer.visible_chunks_buffer || refresh) {
+                    if (!gpu_meshlet_renderer.visible_chunks_buffer || refresh) {
                         cmdbuf.addCleanupAction([=, visible_chunks_array_gpu = gpu_meshlet_renderer.visible_chunks_buffer]() {
 
                         });
@@ -540,11 +543,14 @@ int main(int argc, char** argv) {
                     }
 
                     ms_push_constants.matrix = m;
-                    ms_push_constants.time = ((imr_get_time_nano() / 1000) % 10000000000) / 1000000.0f;
+                    ms_push_constants.frustum = frustum;
                     ms_push_constants.camera_chunk_pos = { player_chunk_x, 0 /* the visible chunks array is always offset at Y=0 player_chunk_y*/, player_chunk_z };
+                    ms_push_constants.camera_pos = camera.position;
+                    ms_push_constants.camera_dir = camera_get_forward_vec(&camera);
+                    ms_push_constants.time = ((imr_get_time_nano() / 1000) % 10000000000) / 1000000.0f;
+                    ms_push_constants.debug = debug_mode;
                     ms_push_constants.visible_chunks_radius = radius;
                     ms_push_constants.visible_chunks_array = gpu_meshlet_renderer.visible_chunks_buffer->device_address();
-                    ms_push_constants.debug = debug_mode;
 
                     size_t required_scratch_buffer_size = 135264L * visible_chunks_array_size * visible_chunks_array_size;
                     if (!scratchBuffer || scratchBuffer->size != required_scratch_buffer_size) {
@@ -578,7 +584,7 @@ int main(int argc, char** argv) {
 
                     context.frame().withRenderTargets(cmdbuf, { &image }, &*depthBuffer, [&]() {
                         vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders->graphics_pipeline->pipeline());
-                        vkCmdPushConstants(cmdbuf, shaders->graphics_pipeline->layout(), VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(ms_push_constants), &ms_push_constants);
+                        vkCmdPushConstants(cmdbuf, shaders->graphics_pipeline->layout(), VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ms_push_constants), &ms_push_constants);
 
                         device.dispatch.cmdDrawMeshTasksEXT(cmdbuf, visible_chunks_array_size, CUNK_CHUNK_SECTIONS_COUNT, visible_chunks_array_size);
                     });
