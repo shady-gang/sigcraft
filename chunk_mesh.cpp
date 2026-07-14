@@ -209,7 +209,7 @@ ChunkMesh::Face encode_face(vec3 color, BlockFace face) {
 template<typename T>
 void upload(imr::Device& d, std::unique_ptr<imr::Buffer>& dst, const std::vector<T>& src, VkBufferUsageFlags flags) {
     size_t buffer_size = src.size() * sizeof(T);
-    dst = std::make_unique<imr::Buffer>(d, buffer_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | flags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    dst = std::make_unique<imr::Buffer>(d, buffer_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | flags, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
     dst->uploadDataSync(0, buffer_size, (void*) src.data());
 }
 
@@ -479,7 +479,7 @@ ChunkVoxelData::ChunkVoxelData(imr::Device& d, std::shared_ptr<Chunk> c) {
             assert(buffer[lod_offsets[4] - 1] == 2);
         }
 
-        buf[section] = std::make_unique<imr::Buffer>(d, buffer_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        buf[section] = std::make_unique<imr::Buffer>(d, buffer_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
         buf[section]->uploadDataSync(0, buffer_size, buffer);
     }
 }

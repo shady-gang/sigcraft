@@ -286,9 +286,9 @@ int main(int argc, char** argv) {
             reload_shaders = false;
         }
 
-        auto began_recording_cmds = imr_get_time_nano();
-
         swapchain.renderFrameSimplified([&](imr::Swapchain::SimplifiedRenderContext& context) {
+            auto began_recording_cmds = imr_get_time_nano();
+
             camera_update(window, &camera_input);
             camera_move_freelook(&camera, &camera_input, &camera_state, delta);
 
