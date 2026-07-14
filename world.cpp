@@ -104,6 +104,7 @@ void World::load_chunk(int cx, int cz) {
             if (!r)
                 r = load_region(regions_guard, rx, rz);
             *handle->handle.lock_mut() = std::make_shared<Chunk>(*r, cx, cz);
+            changes.fetch_add(1);
         });
     }
 }
@@ -112,6 +113,7 @@ void World::unload_chunk(Chunk* chunk) {
     Int2 pos = { chunk->cx, chunk->cz };
     auto held_guard = held_chunks.lock_mut();
     held_guard->erase(pos);
+    changes.fetch_add(1);
 }
 
 template<typename Guard>

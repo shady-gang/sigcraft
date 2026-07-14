@@ -98,6 +98,7 @@ struct World {
         Mutex<std::shared_ptr<Chunk>> handle;
     };
     Mutex<std::unordered_map<Int2, std::shared_ptr<ChunkHandle>>> held_chunks;
+    std::atomic<int> changes = 0;
 
     explicit World(const char*);
     World(const World&) = delete;

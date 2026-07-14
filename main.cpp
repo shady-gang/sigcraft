@@ -260,6 +260,11 @@ int main(int argc, char** argv) {
         std::vector<std::tuple<int, int, std::shared_ptr<ChunkMesh>>> used_meshes;
     } cpu_vs_renderer;
 
+    struct {
+        std::shared_ptr<imr::Buffer> visible_chunks_buffer;
+        std::vector<std::shared_ptr<ChunkVoxelData>> used_data;
+    } gpu_meshlet_renderer;
+
     auto& vk = device.dispatch;
     while (!glfwWindowShouldClose(window)) {
         fps_counter.tick();
@@ -341,7 +346,6 @@ int main(int argc, char** argv) {
             m = m * flip_y;
             mat4 view_mat = camera_get_view_mat4(&camera, context.image().size().width, context.image().size().height);
             m = m * view_mat;
-            m = m * translate_mat4(vec3(-0.5, -0.5f, -0.5f));
 
             Frustum frustum;
             frustum.extractFromMatrix(m);
@@ -350,6 +354,7 @@ int main(int argc, char** argv) {
             int player_chunk_y = camera.position.y / 16;
             int player_chunk_z = camera.position.z / 16;
 
+            bool refresh = !cache_meshlets;
             ivec3 camera_chunk_pos = ivec3(player_chunk_x, player_chunk_y, player_chunk_z);
             if (!old_camera_chunk_pos || ((old_camera_chunk_pos->x) != camera_chunk_pos.x) || ((old_camera_chunk_pos->z) != camera_chunk_pos.z)) {
                 old_camera_chunk_pos = camera_chunk_pos;
@@ -365,22 +370,31 @@ int main(int argc, char** argv) {
                     }
                 }
 
-                for (auto& chunk : renderable_chunks) {
+                for (auto& chunk : world.loaded_chunks()) {
                     if (abs(chunk->cx - player_chunk_x) > radius || abs(chunk->cz - player_chunk_z) > radius) {
                         world.unload_chunk(chunk.get());
                         continue;
                     }
                 }
+
+                refresh = true;
             }
 
-            if (!cache_meshlets)
+            int changes = world.changes;
+            if (changes > 0) {
+                int remaining = world.changes.fetch_sub(changes);
+                assert(remaining - changes >= 0);
+                refresh = true;
+            }
+
+            if (refresh)
                 renderable_chunks = world.loaded_chunks();
 
             switch (renderer) {
                 case CPU_MESHLETS: {
                     int visible_chunks_array_size = radius * 2 + 1;
 
-                    if (!cache_meshlets) {
+                    if (!cpu_meshlet_renderer.visible_chunks_buffer || refresh) {
                         cmdbuf.addCleanupAction([=, used_meshes = cpu_meshlet_renderer.used_meshlets]() {
 
                         });
@@ -389,6 +403,10 @@ int main(int argc, char** argv) {
                         visible_chunks.resize(visible_chunks_array_size * visible_chunks_array_size);
                         memset(visible_chunks.data(), 0, sizeof(uint64_t) * visible_chunks.size());
                         for (auto& chunk: renderable_chunks) {
+                            if (abs(chunk->cx - player_chunk_x) > radius || abs(chunk->cz - player_chunk_z) > radius) {
+                                continue;
+                            }
+
                             unsigned visible_chunks_array_coord_x = (chunk->cx - player_chunk_x) + radius;
                             unsigned visible_chunks_array_coord_z = (chunk->cz - player_chunk_z) + radius;
                             assert(visible_chunks_array_coord_x < visible_chunks_array_size);
@@ -464,59 +482,71 @@ int main(int argc, char** argv) {
                 }
                 case GPU_MESHLETS: {
                     int visible_chunks_array_size = radius * 2 + 1;
-                    std::vector<std::array<uint64_t, CUNK_CHUNK_SECTIONS_COUNT>> visible_chunks;
-                    visible_chunks.resize(visible_chunks_array_size * visible_chunks_array_size);
-                    memset(visible_chunks.data(), 0, sizeof(uint64_t) * CUNK_CHUNK_SECTIONS_COUNT * visible_chunks.size());
-
-                    for (auto& chunk : renderable_chunks) {
-                        unsigned visible_chunks_array_coord_x = (chunk->cx - player_chunk_x) + radius;
-                        unsigned visible_chunks_array_coord_z = (chunk->cz - player_chunk_z) + radius;
-                        assert(visible_chunks_array_coord_x < visible_chunks_array_size);
-                        assert(visible_chunks_array_coord_z < visible_chunks_array_size);
-                        auto& visible_chunks_array_cell = visible_chunks[visible_chunks_array_coord_x * visible_chunks_array_size + visible_chunks_array_coord_z];
-
-                        auto data_lock = chunk->gpu_data.lock_mut();
-                        auto& data_container = *data_lock;
-                        if (!data_container.data) {
-                            if (data_container.task_spawned)
-                                continue;
-
-                            data_container.task_spawned = true;
-                            tp.schedule([&device, chunk]() {
-                               auto data = std::make_shared<ChunkVoxelData>(device, chunk);
-                               auto data_lock = chunk->gpu_data.lock_mut();
-                               data_lock->data = data;
-                               data_lock->task_spawned = false;
-                            });
-                            continue;
-                        }
-                        auto data = data_container.data;
-
-                        for (int section = 0; section < CUNK_CHUNK_SECTIONS_COUNT; section++) {
-                            if (!data->buf[section]) {
-                                visible_chunks_array_cell[section] = 0;
-                                continue;
-                            }
-
-                            visible_chunks_array_cell[section] = data->buf[section]->device_address();
-                        }
-
-                        cmdbuf.addCleanupAction([=, data = data]() {
+                    if (gpu_meshlet_renderer.visible_chunks_buffer || refresh) {
+                        cmdbuf.addCleanupAction([=, visible_chunks_array_gpu = gpu_meshlet_renderer.visible_chunks_buffer]() {
 
                         });
+                        cmdbuf.addCleanupAction([=, used_data = gpu_meshlet_renderer.used_data]() {
+
+                        });
+                        gpu_meshlet_renderer.used_data.clear();
+
+                        std::vector<std::array<uint64_t, CUNK_CHUNK_SECTIONS_COUNT>> visible_chunks;
+                        visible_chunks.resize(visible_chunks_array_size * visible_chunks_array_size);
+                        memset(visible_chunks.data(), 0, sizeof(uint64_t) * CUNK_CHUNK_SECTIONS_COUNT * visible_chunks.size());
+
+                        for (auto& chunk: renderable_chunks) {
+                            if (abs(chunk->cx - player_chunk_x) > radius || abs(chunk->cz - player_chunk_z) > radius) {
+                                continue;
+                            }
+                            unsigned visible_chunks_array_coord_x = (chunk->cx - player_chunk_x) + radius;
+                            unsigned visible_chunks_array_coord_z = (chunk->cz - player_chunk_z) + radius;
+                            assert(visible_chunks_array_coord_x < visible_chunks_array_size);
+                            assert(visible_chunks_array_coord_z < visible_chunks_array_size);
+                            auto& visible_chunks_array_cell = visible_chunks[visible_chunks_array_coord_x * visible_chunks_array_size + visible_chunks_array_coord_z];
+
+                            auto data_lock = chunk->gpu_data.lock_mut();
+                            auto& data_container = *data_lock;
+                            if (!data_container.data) {
+                                if (data_container.task_spawned)
+                                    continue;
+
+                                data_container.task_spawned = true;
+                                tp.schedule([&device, chunk]() {
+                                    auto data = std::make_shared<ChunkVoxelData>(device, chunk);
+                                    auto data_lock = chunk->gpu_data.lock_mut();
+                                    data_lock->data = data;
+                                    data_lock->task_spawned = false;
+                                });
+                                continue;
+                            }
+                            auto data = data_container.data;
+
+                            for (int section = 0; section < CUNK_CHUNK_SECTIONS_COUNT; section++) {
+                                if (!data->buf[section]) {
+                                    visible_chunks_array_cell[section] = 0;
+                                    continue;
+                                }
+
+                                visible_chunks_array_cell[section] = data->buf[section]->device_address();
+                            }
+
+                            gpu_meshlet_renderer.used_data.push_back(data);
+                        }
+
+                        gpu_meshlet_renderer.visible_chunks_buffer = std::make_shared<imr::Buffer>(device, sizeof(uint64_t) * CUNK_CHUNK_SECTIONS_COUNT * visible_chunks_array_size * visible_chunks_array_size,
+                                                                                      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+                        gpu_meshlet_renderer.visible_chunks_buffer->uploadDataSync(0, sizeof(uint64_t) * CUNK_CHUNK_SECTIONS_COUNT * visible_chunks_array_size * visible_chunks_array_size, visible_chunks.data());
                     }
 
-                    auto visible_chunks_array_gpu = std::make_shared<imr::Buffer>(device, sizeof(uint64_t) * CUNK_CHUNK_SECTIONS_COUNT * visible_chunks_array_size * visible_chunks_array_size,
-                                                                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-                    visible_chunks_array_gpu->uploadDataSync(0, sizeof(uint64_t) * CUNK_CHUNK_SECTIONS_COUNT * visible_chunks_array_size * visible_chunks_array_size, visible_chunks.data());
                     ms_push_constants.matrix = m;
                     ms_push_constants.time = ((imr_get_time_nano() / 1000) % 10000000000) / 1000000.0f;
                     ms_push_constants.camera_chunk_pos = { player_chunk_x, 0 /* the visible chunks array is always offset at Y=0 player_chunk_y*/, player_chunk_z };
                     ms_push_constants.visible_chunks_radius = radius;
-                    ms_push_constants.visible_chunks_array = visible_chunks_array_gpu->device_address();
+                    ms_push_constants.visible_chunks_array = gpu_meshlet_renderer.visible_chunks_buffer->device_address();
                     ms_push_constants.debug = debug_mode;
 
-                    size_t required_scratch_buffer_size = 135264 * visible_chunks_array_size * visible_chunks_array_size;
+                    size_t required_scratch_buffer_size = 135264L * visible_chunks_array_size * visible_chunks_array_size;
                     if (!scratchBuffer || scratchBuffer->size != required_scratch_buffer_size) {
                         if (scratchBuffer) {
                             // hold onto it till the frame is done
@@ -552,16 +582,12 @@ int main(int argc, char** argv) {
 
                         device.dispatch.cmdDrawMeshTasksEXT(cmdbuf, visible_chunks_array_size, CUNK_CHUNK_SECTIONS_COUNT, visible_chunks_array_size);
                     });
-
-                    cmdbuf.addCleanupAction([=, visible_chunks_array_gpu = visible_chunks_array_gpu]() {
-
-                    });
                     break;
                 }
                 case CPU_MESH: {
                     vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders->graphics_pipeline->pipeline());
                     context.frame().withRenderTargets(cmdbuf, { &image }, &*depthBuffer, [&]() {
-                        if (!cache_meshlets) {
+                        if (refresh) {
                             cmdbuf.addCleanupAction([=, used_meshes = std::move(cpu_vs_renderer.used_meshes)]() {
 
                             });
