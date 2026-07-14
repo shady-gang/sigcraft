@@ -15,13 +15,17 @@
 #extension GL_EXT_debug_printf : enable
 #extension GL_GOOGLE_include_directive : require
 
+#define TASK_SHADER_MESHING 1
+
 #include "frustum.glsl"
 #include "chunk_data.glsl"
-//#include "neighboring_chunks.glsl"
+#if TASK_SHADER_MESHING
+#include "neighboring_chunks.glsl"
+#endif
 #include "voxel_range_meshlet.glsl"
 #include "voxel_mesh.glsl"
 
-layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
 
 layout(scalar, push_constant) uniform T {
     mat4 matrix;
@@ -38,10 +42,19 @@ layout(scalar, push_constant) uniform T {
 
 struct Payload {
     ivec3 chunk_position;
+#if TASK_SHADER_MESHING
+    VoxelMeshlets meshlets;
+#else
     uint64_t tmp;
+#endif
 };
 
 taskPayloadSharedEXT Payload ts_out;
+
+#if TASK_SHADER_MESHING
+#define VOXEL_RANGE_MESHLET_OUTPUT ts_out.meshlets
+#include "voxel_range_meshlet_producer.glsl"
+#endif
 
 void main() {
     uvec3 relative_chunk_id = gl_WorkGroupID;
@@ -54,14 +67,31 @@ void main() {
     chunk_position.y = 0;
     chunk_position += visual_chunk_offset;
 
+    vec3 cmin = vec3(chunk_position * 16);
+    vec3 cmax = cmin + vec3(16);
+    if (!isAABBInsideFrustum(push_constants.frustum, cmin, cmax)) {
+        EmitMeshTasksEXT(0, 1, 1);
+        return;
+    }
+
     int section = int(relative_chunk_id.y);
 
-    ChunkTmpRef tmp = ChunkTmpRef(uint64_t(push_constants.tmp) + 135264 * visible_chunks_array_idx + 5636 * section);
-
     ts_out.chunk_position = chunk_position * 16;
-    ts_out.tmp = uint64_t(tmp);
 
+#if TASK_SHADER_MESHING
+    uint occluded_direct_neighbors = load_neighboring_chunks(chunk_position, push_constants.camera_chunk_pos, push_constants.visible_chunk_radius, VisibleChunksArrayRef(push_constants.visible_chunks));
+
+    if (!is_chunk_empty(VisibleChunksArrayRef(push_constants.visible_chunks).ref[visible_chunks_array_idx].sections[section]) && occluded_direct_neighbors < 7) {
+        scan_chunk_produce_meshlets();
+        EmitMeshTasksEXT(ts_out.meshlets.num_meshlets, 1, 1);
+    } else {
+        EmitMeshTasksEXT(0, 1, 1);
+    }
+#else
+    VoxelMeshletsRef tmp = VoxelMeshletsRef(uint64_t(push_constants.tmp) + 135264 * visible_chunks_array_idx + 5636 * section);
+    ts_out.tmp = uint64_t(tmp);
     // debugPrintfEXT("%d %d %d meshlets %d\n", chunk_position.x, chunk_position.y, chunk_position.z, tmp.ref.num_meshlets);
     EmitMeshTasksEXT(tmp.ref.num_meshlets, 1, 1);
+#endif
 
 }

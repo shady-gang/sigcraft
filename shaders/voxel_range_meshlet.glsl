@@ -1,6 +1,9 @@
 #ifndef VOXEL_RANGE_MESHLET_H
 #define VOXEL_RANGE_MESHLET_H
 
+#define MAX_VERTS 128
+#define MAX_PRIMS 256
+
 // sizeof = 6
 struct MeshletPayload {
     uint16_t start;
@@ -10,19 +13,19 @@ struct MeshletPayload {
 };
 
 // sizeof = 5636
-struct ChunkTmp {
+struct VoxelMeshlets {
     uint8_t faces[4096];
     uint num_meshlets;
     MeshletPayload meshlets[256];
 };
 
-layout(scalar, buffer_reference) buffer ChunkTmpRef {
-    ChunkTmp ref;
+layout(scalar, buffer_reference) buffer VoxelMeshletsRef {
+    VoxelMeshlets ref;
 };
 
 // sizeof = 135264
 struct ChunkTmpSections {
-    ChunkTmp sections[24];
+    VoxelMeshlets sections[24];
 };
 
 layout(scalar, buffer_reference) buffer TmpRef {

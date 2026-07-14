@@ -19,6 +19,13 @@ uint encode_chunkcoord(uvec3 v, uint lod) {
     return encode_chunkcoord(v.x, v.y, v.z, lod);
 }
 
+bool is_chunk_empty(CubicChunkRef chunk) {
+    if (uint64_t(chunk) == 0)
+        return true;
+    uint data = chunk.data[encode_chunkcoord(uvec3(0), 4)];
+    return data == 0;
+}
+
 bool is_chunk_solid(CubicChunkRef chunk) {
     uint data = chunk.data[encode_chunkcoord(uvec3(0), 4)];
     return data == 2;

@@ -552,7 +552,7 @@ int main(int argc, char** argv) {
                     ms_push_constants.visible_chunks_radius = radius;
                     ms_push_constants.visible_chunks_array = gpu_meshlet_renderer.visible_chunks_buffer->device_address();
 
-                    size_t required_scratch_buffer_size = 135264L * visible_chunks_array_size * visible_chunks_array_size;
+                    /*size_t required_scratch_buffer_size = 135264L * visible_chunks_array_size * visible_chunks_array_size;
                     if (!scratchBuffer || scratchBuffer->size != required_scratch_buffer_size) {
                         if (scratchBuffer) {
                             // hold onto it till the frame is done
@@ -580,7 +580,7 @@ int main(int argc, char** argv) {
                             }),
                         }));
                     }
-                    meshlets_baked = true;
+                    meshlets_baked = true;*/
 
                     context.frame().withRenderTargets(cmdbuf, { &image }, &*depthBuffer, [&]() {
                         vkCmdBindPipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, shaders->graphics_pipeline->pipeline());

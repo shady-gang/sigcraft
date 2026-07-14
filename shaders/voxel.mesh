@@ -13,17 +13,19 @@
 #extension GL_EXT_debug_printf : enable
 #extension GL_GOOGLE_include_directive : require
 
+#define TASK_SHADER_MESHING 1
+
 #include "frustum.glsl"
 #include "chunk_data.glsl"
-//#include "neighboring_chunks.glsl"
+#if TASK_SHADER_MESHING
+#include "neighboring_chunks.glsl"
+#endif
 #include "voxel_range_meshlet.glsl"
 #include "voxel_mesh.glsl"
+
 #include "heatmap.glsl"
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
-
-#define MAX_VERTS 64
-#define MAX_PRIMS 126
 
 layout(triangles, max_vertices = MAX_VERTS, max_primitives = MAX_PRIMS) out;
 
@@ -37,12 +39,16 @@ layout(scalar, push_constant) uniform T {
     int debug;
     int visible_chunk_radius;
     uint64_t visible_chunks;
-    ChunkTmpRef tmp;
+    uint64_t xxx;
 } push_constants;
 
 struct Payload {
     ivec3 chunk_position;
+#if TASK_SHADER_MESHING
+    VoxelMeshlets meshlets;
+#else
     uint64_t tmp;
+#endif
 };
 
 taskPayloadSharedEXT Payload ts_in;
@@ -94,7 +100,11 @@ uint safe_vert_idx(uint idx, uint num_verts) {
 }
 
 void main() {
-    MeshletPayload meshlet = ChunkTmpRef(ts_in.tmp).ref.meshlets[gl_WorkGroupID.x];
+#if TASK_SHADER_MESHING
+    MeshletPayload meshlet = ts_in.meshlets.meshlets[gl_WorkGroupID.x];
+#else
+    MeshletPayload meshlet = VoxelMeshletsRef(ts_in.tmp).ref.meshlets[gl_WorkGroupID.x];
+#endif
     SetMeshOutputsEXT(meshlet.num_verts, meshlet.num_prims);
 
     // always zero-out the output primitives array first
@@ -132,7 +142,11 @@ void main() {
 
             vec3 color = vec3(fract(ts_in.chunk_position.x * 7.777 + start * 0.5231), fract(ts_in.chunk_position.y * 7.777 + start * 0.252102), fract(ts_in.chunk_position.z * 7.777 + start * 0.333));
 
-            uint faces = uint(ChunkTmpRef(ts_in.tmp).ref.faces[encode_chunkcoord(block_pos, 0)]);
+#if TASK_SHADER_MESHING
+            uint faces = uint(ts_in.meshlets.faces[encode_chunkcoord(block_pos, 0)]);
+#else
+            uint faces = uint(VoxelMeshletsRef(ts_in.tmp).ref.faces[encode_chunkcoord(block_pos, 0)]);
+#endif
             uint vertices = uint(face_mask_to_vertex_mask(int(faces)));
             uint num_vertices = bitCount(vertices);
             int num_faces = bitCount(faces) * 2;
